@@ -6,11 +6,13 @@
 #include <LiquidCrystal_I2C.h>
 #include <EEPROM.h>
 #include <SD.h>
+#include <SHA256.h>    // Add Crypto library
+#include <Base64.h>    // Add Base64 library
 
 
 // EEPROM address where the threshold is stored
 #define EEPROM_TEMP_THRESHOLD_ADDR 0
-
+            
 // Threshold limits
 #define MIN_THRESHOLD 20
 #define MAX_THRESHOLD 50
@@ -62,6 +64,9 @@ unsigned long lastCsvWrite = 0;
 
 // --- Ethernet Server ---
 EthernetServer server(80);
+
+#define AUTH_USERNAME "Seegrid"
+#define AUTH_PASSWORD_SHA256 "e2e1e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2" // Replace with actual SHA256 hex
 
 void sendNTPpacket(IPAddress &address) {
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
@@ -346,9 +351,9 @@ void setup() {
   dhtD.begin();
 
   // Load threshold from EEPROM
-  EEPROM.get(0, tempThreshold);
-  if (tempThreshold < 20.0 || tempThreshold > 50.0) {
-    tempThreshold = 22.0;
+  EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
+  if (tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
+    tempThreshold = DEFAULT_TEMP_THRESHOLD  ;
   }
 
   pinMode(10, OUTPUT);
@@ -628,7 +633,6 @@ void loop() {
     lastEpochUpdate = now;
   }
 
-
   // --- Threshold Menu Button Hold ---
   if (digitalRead(BUTTON_PIN) == LOW) {
     unsigned long holdStart = millis();
@@ -869,32 +873,82 @@ void loop() {
         httpRequest += c;
 
         if (c == '\n' && currentLineIsBlank) {
+          // --- Protect temp.csv ---
           if (httpRequest.startsWith("GET /temp.csv")) {
-            serveFile(client, "temp.csv", "text/csv");
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              serveFile(client, "temp.csv", "text/csv");
+            }
             break;
+          // --- Protect humid.csv ---
           } else if (httpRequest.startsWith("GET /humid.csv")) {
-            serveFile(client, "humid.csv", "text/csv");
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              serveFile(client, "humid.csv", "text/csv");
+            }
             break;
+          // --- Protect delete_temp ---
           } else if (httpRequest.startsWith("GET /delete_temp")) {
-            SD.remove("temp.csv");
-            createCsvHeaderIfNeeded();
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-Type: text/plain");
-            client.println("Connection: close");
-            client.println();
-            client.println("Temperature CSV deleted.");
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              SD.remove("temp.csv");
+              createCsvHeaderIfNeeded();
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Temperature CSV deleted.");
+            }
             break;
+          // --- Protect delete_humid ---
           } else if (httpRequest.startsWith("GET /delete_humid")) {
-            SD.remove("humid.csv");
-            createCsvHeaderIfNeeded();
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-Type: text/plain");
-            client.println("Connection: close");
-            client.println();
-            client.println("Humidity CSV deleted.");
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              SD.remove("humid.csv");
+              createCsvHeaderIfNeeded();
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Humidity CSV deleted.");
+            }
             break;
+          // --- Protect root page ---
           } else if (httpRequest.startsWith("GET /")) {
-            serveRootPage(client);
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              serveRootPage(client);
+            }
             break;
           } else {
             client.println("HTTP/1.1 404 Not Found");
@@ -917,3 +971,41 @@ void loop() {
     client.stop();
   }
 }
+
+#define MAX_CLIENTS 10
+#define MAX_PER_IP 3
+
+struct ClientInfo {
+  IPAddress ip;
+  uint8_t count;
+};
+
+ClientInfo clientList[MAX_CLIENTS];
+uint8_t globalConnectionCount = 0;
+
+bool canAcceptConnection(IPAddress ip) {
+  // Check global limit
+  if (globalConnectionCount >= MAX_CLIENTS) return false;
+
+  // Check per-IP limit
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clientList[i].ip == ip) {
+      if (clientList[i].count >= MAX_PER_IP) return false;
+      clientList[i].count++;
+      globalConnectionCount++;
+      return true;
+    }
+  }
+  // New IP, add to list
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clientList[i].count == 0) {
+      clientList[i].ip = ip;
+      clientList[i].count = 1;
+      globalConnectionCount++;
+      return true;
+    }
+  }
+  return false; // No space for new IP
+}
+
+// On connection close, decrement counts accordingly
