@@ -6,9 +6,9 @@
 #include <LiquidCrystal_I2C.h>
 #include <EEPROM.h>
 #include <SD.h>
-#include <SHA256.h>    // Add Crypto library
-#include <Base64.h>    // Add Base64 library
-
+#include <Crypto.h>
+#include <SHA256.h>
+#include <base64.hpp>
 
 // EEPROM address where the threshold is stored
 #define EEPROM_TEMP_THRESHOLD_ADDR 0
@@ -20,6 +20,12 @@
 // Default threshold if EEPROM value is invalid
 #define DEFAULT_TEMP_THRESHOLD 20
 float tempThreshold = DEFAULT_TEMP_THRESHOLD;
+
+// Connection limiting definitions
+#define MAX_GLOBAL_CONNECTIONS 8
+#define MAX_PER_IP_CONNECTIONS 3
+#define CONNECTION_TRACKING_SIZE 15
+#define CONNECTION_TIMEOUT 300000
 
 // --- NTP & Ethernet config ---
 byte mac[] = { 0xA8, 0x61, 0x0A, 0xAE, 0x30, 0x21 };
@@ -41,7 +47,6 @@ LiquidCrystal_I2C lcd(0x3F, 20, 4);
 #define GREEN_LED_PIN 7
 #define BUTTON_PIN 13
 
-//float tempThreshold = 22.0;
 const float thresholdMargin = 3.0;
 const unsigned long blinkIntervalNormal = 500;
 const unsigned long blinkIntervalFast = 250;
@@ -66,7 +71,187 @@ unsigned long lastCsvWrite = 0;
 EthernetServer server(80);
 
 #define AUTH_USERNAME "Seegrid"
-#define AUTH_PASSWORD_SHA256 "e2e1e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2" // Replace with actual SHA256 hex
+#define AUTH_PASSWORD_SHA256 "8b3d7f4a1c2e9f6b5a8d3c1e4f7a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1d4e7f0a"
+
+// Connection tracking structure
+struct ConnectionTracker {
+  IPAddress ip;
+  uint8_t activeConnections;
+  unsigned long lastConnectionTime;
+};
+
+ConnectionTracker connectionTrackers[CONNECTION_TRACKING_SIZE];
+uint8_t globalConnectionCount = 0;
+
+// Function prototypes
+void initConnectionTracking();
+void cleanupStaleConnections();
+bool canAcceptConnection(IPAddress clientIP);
+void releaseConnection(IPAddress clientIP);
+void sendServiceUnavailable(EthernetClient &client);
+bool checkAuth(String httpRequest);
+
+// Initialize connection tracking
+void initConnectionTracking() {
+  for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
+    connectionTrackers[i].ip = IPAddress(0, 0, 0, 0);
+    connectionTrackers[i].activeConnections = 0;
+    connectionTrackers[i].lastConnectionTime = 0;
+  }
+  globalConnectionCount = 0;
+}
+
+// Clean up stale connection records
+void cleanupStaleConnections() {
+  unsigned long now = millis();
+  for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
+    if (connectionTrackers[i].activeConnections > 0 && 
+        (now - connectionTrackers[i].lastConnectionTime > CONNECTION_TIMEOUT)) {
+      globalConnectionCount -= connectionTrackers[i].activeConnections;
+      connectionTrackers[i].activeConnections = 0;
+      connectionTrackers[i].ip = IPAddress(0, 0, 0, 0);
+    }
+  }
+}
+
+// Check if a new connection can be accepted
+bool canAcceptConnection(IPAddress clientIP) {
+  if (globalConnectionCount >= MAX_GLOBAL_CONNECTIONS) {
+    Serial.print("Global connection limit reached: ");
+    Serial.println(globalConnectionCount);
+    return false;
+  }
+
+  int trackerIndex = -1;
+  int emptySlot = -1;
+  
+  for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
+    if (connectionTrackers[i].ip == clientIP && connectionTrackers[i].activeConnections > 0) {
+      trackerIndex = i;
+      break;
+    }
+    if (emptySlot == -1 && connectionTrackers[i].activeConnections == 0) {
+      emptySlot = i;
+    }
+  }
+
+  if (trackerIndex != -1) {
+    if (connectionTrackers[trackerIndex].activeConnections >= MAX_PER_IP_CONNECTIONS) {
+      Serial.print("Per-IP limit reached for: ");
+      Serial.print(clientIP);
+      Serial.print(" (");
+      Serial.print(connectionTrackers[trackerIndex].activeConnections);
+      Serial.println(" connections)");
+      return false;
+    }
+    connectionTrackers[trackerIndex].activeConnections++;
+    connectionTrackers[trackerIndex].lastConnectionTime = millis();
+  } else if (emptySlot != -1) {
+    connectionTrackers[emptySlot].ip = clientIP;
+    connectionTrackers[emptySlot].activeConnections = 1;
+    connectionTrackers[emptySlot].lastConnectionTime = millis();
+  } else {
+    Serial.println("Connection tracking array full");
+    return false;
+  }
+
+  globalConnectionCount++;
+  
+  Serial.print("Connection accepted. IP: ");
+  Serial.print(clientIP);
+  Serial.print(" | Global: ");
+  Serial.print(globalConnectionCount);
+  Serial.print("/");
+  Serial.println(MAX_GLOBAL_CONNECTIONS);
+  
+  return true;
+}
+
+// Release a connection
+void releaseConnection(IPAddress clientIP) {
+  for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
+    if (connectionTrackers[i].ip == clientIP && connectionTrackers[i].activeConnections > 0) {
+      connectionTrackers[i].activeConnections--;
+      connectionTrackers[i].lastConnectionTime = millis();
+      
+      if (connectionTrackers[i].activeConnections == 0) {
+        connectionTrackers[i].ip = IPAddress(0, 0, 0, 0);
+      }
+      
+      if (globalConnectionCount > 0) {
+        globalConnectionCount--;
+      }
+      
+      Serial.print("Connection released. IP: ");
+      Serial.print(clientIP);
+      Serial.print(" | Global: ");
+      Serial.print(globalConnectionCount);
+      Serial.print("/");
+      Serial.println(MAX_GLOBAL_CONNECTIONS);
+      break;
+    }
+  }
+}
+
+// Send 503 Service Unavailable response
+void sendServiceUnavailable(EthernetClient &client) {
+  client.println("HTTP/1.1 503 Service Unavailable");
+  client.println("Content-Type: text/html");
+  client.println("Retry-After: 60");
+  client.println("Connection: close");
+  client.println();
+  client.println("<!DOCTYPE html><html><head><title>Service Unavailable</title></head>");
+  client.println("<body><h1>503 Service Unavailable</h1>");
+  client.println("<p>Server is currently at maximum capacity. Please try again later.</p>");
+  client.println("</body></html>");
+}
+
+// SHA256 authentication check function
+bool checkAuth(String httpRequest) {
+  int authIndex = httpRequest.indexOf("Authorization: Basic ");
+  if (authIndex == -1) return false;
+  
+  int startIndex = authIndex + 21;
+  int endIndex = httpRequest.indexOf('\r', startIndex);
+  if (endIndex == -1) endIndex = httpRequest.indexOf('\n', startIndex);
+  
+  String encodedCredentials = httpRequest.substring(startIndex, endIndex);
+  encodedCredentials.trim();
+  
+  // Decode Base64 credentials using decode_base64
+  unsigned int decodedLength = decode_base64_length((unsigned char*)encodedCredentials.c_str());
+  unsigned char decodedCredentials[decodedLength + 1];
+  decode_base64((unsigned char*)encodedCredentials.c_str(), decodedCredentials);
+  decodedCredentials[decodedLength] = '\0';
+  
+  String credentials = String((char*)decodedCredentials);
+  int colonIndex = credentials.indexOf(':');
+  if (colonIndex == -1) return false;
+  
+  String username = credentials.substring(0, colonIndex);
+  String password = credentials.substring(colonIndex + 1);
+  
+  // Check username
+  if (!username.equals(AUTH_USERNAME)) return false;
+  
+  // Hash the provided password and compare to stored hash
+  SHA256 sha256;
+  sha256.reset();
+  sha256.update((const byte*)password.c_str(), password.length());
+  
+  byte hash[32];
+  sha256.finalize(hash, 32);
+  
+  // Convert hash to hex string
+  char hashHex[65];
+  for (int i = 0; i < 32; i++) {
+    sprintf(&hashHex[i * 2], "%02x", hash[i]);
+  }
+  hashHex[64] = '\0';
+  
+  // Compare with stored SHA256 hash
+  return String(hashHex).equals(String(AUTH_PASSWORD_SHA256));
+}
 
 void sendNTPpacket(IPAddress &address) {
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
@@ -141,7 +326,6 @@ bool isDST(int year, int month, int day, int weekday) {
 
 void requestNtpTime() {
   IPAddress ntpIP(129, 6, 15, 28);
-  //IPAddress ntpIP(192, 168, 55, 60);
   Serial.println("Sending NTP request...");
   sendNTPpacket(ntpIP);
 
@@ -197,7 +381,6 @@ String getDateString() {
   return String(buffer);
 }
 
-// *** New function added to get HH:MM:SS time string ***
 String getTimeString() {
   int year, month, day, hour, minute, second, weekday;
   epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
@@ -284,10 +467,193 @@ void appendCsvData() {
   }
 }
 
+void serveFile(EthernetClient &client, const char *filename, const char *contentType) {
+  if (SD.exists(filename)) {
+    File file = SD.open(filename, FILE_READ);
+    client.println("HTTP/1.1 200 OK");
+    client.print("Content-Type: ");
+    client.println(contentType);
+    client.println("Connection: close");
+    client.println();
+
+    while (file.available()) {
+      client.write(file.read());
+    }
+    file.close();
+  } else {
+    client.println("HTTP/1.1 404 Not Found");
+    client.println("Content-Type: text/plain");
+    client.println("Connection: close");
+    client.println();
+    client.println("File not found");
+  }
+}
+
+void serveRootPage(EthernetClient &client) {
+  String lastUpdate = getDateString() + " " + getTimeString();
+
+  client.println(F("HTTP/1.1 200 OK"));
+  client.println(F("Content-Type: text/html"));
+  client.println(F("Connection: close"));
+  client.println();
+
+  client.println(F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"));
+  client.println(F("<title>Seegrid Aging Room Data</title>"));
+  client.println(F("<style>"));
+  client.println(F("body{font-family:sans-serif;background:#f4f4f4;padding:20px;}"));
+  client.println(F(".tab{display:inline-block;padding:10px 20px;margin:5px;background:#ccc;cursor:pointer;}"));
+  client.println(F(".tab.active{background:#999;}"));
+  client.println(F(".tab-content{display:none;}"));
+  client.println(F(".tab-content.active{display:block;}"));
+  client.println(F("canvas { width: 100% !important; height: auto !important; }"));
+  client.println(F("button { margin-left: 10px; }"));
+  client.println(F("</style>"));
+  client.println(F("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"));
+  client.println(F("</head><body>"));
+
+  client.println(F("<h2>Seegrid Aging Room Data</h2>"));
+  client.print(F("<p>Last update: <span id='lastUpdate'>"));
+  client.print(lastUpdate);
+  client.println(F("</span></p>"));
+
+  client.println(F("<div>"));
+  client.println(F("<div class='tab active' onclick=\"showTab('temp', event)\">Temperature</div>"));
+  client.println(F("<div class='tab' onclick=\"showTab('humid', event)\">Humidity</div>"));
+  client.println(F("</div>"));
+
+  client.println(F("<div id='temp' class='tab-content active'>"));
+  client.println(F("<label>Range: <select id='tempRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
+  client.println(F("<button onclick='downloadChart(tempChart, \"temp\")'>Export Temperature PNG</button>"));
+  client.println(F("<button onclick=\"window.location='/temp.csv'\">Download Temperature CSV</button>"));
+  client.println(F("<button onclick='confirmDelete(\"temp\")'>Delete Temperature CSV</button>"));
+  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
+  client.println(F("<br><div style='max-width:1000px; height:600px;'><canvas id='tempChart'></canvas></div></div>"));
+
+  client.println(F("<div id='humid' class='tab-content'>"));
+  client.println(F("<label>Range: <select id='humidRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
+  client.println(F("<button onclick='downloadChart(humidChart, \"humid\")'>Export Humidity PNG</button>"));
+  client.println(F("<button onclick=\"window.location='/humid.csv'\">Download Humidity CSV</button>"));
+  client.println(F("<button onclick='confirmDelete(\"humid\")'>Delete Humidity CSV</button>"));
+  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
+  client.println(F("<br><div style='max-width:1000px; height:600px;'><canvas id='humidChart'></canvas></div></div>"));
+
+  client.println(F("<script>"));
+  client.println(F("let tempChart, humidChart;"));
+
+  client.println(F("function showTab(id, evt){"));
+  client.println(F("  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));"));
+  client.println(F("  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));"));
+  client.println(F("  document.getElementById(id).classList.add('active');"));
+  client.println(F("  evt.target.classList.add('active');"));
+  client.println(F("}"));
+
+  client.println(F("function downloadChart(chart, label){"));
+  client.println(F("  if(!chart) return;"));
+  client.println(F("  const link = document.createElement('a');"));
+  client.println(F("  link.download = label + '_chart.png';"));
+  client.println(F("  link.href = chart.toBase64Image();"));
+  client.println(F("  link.click();"));
+  client.println(F("}"));
+
+  client.println(F("function confirmDelete(type) {"));
+  client.println(F("  if(confirm('Are you sure you want to delete the ' + type + ' CSV file?')) {"));
+  client.println(F("    window.location = '/delete_' + type;"));
+  client.println(F("  }"));
+  client.println(F("}"));
+
+  client.println(F("async function fetchData(filename, rangeDays) {"));
+  client.println(F("  let res = await fetch('/' + filename);"));
+  client.println(F("  let text = await res.text();"));
+  client.println(F("  let lines = text.trim().split('\\n').slice(1);"));
+  client.println(F("  let limit = new Date().getTime() - rangeDays * 86400000;"));
+  client.println(F("  let labels=[], sensorsA=[], sensorsB=[], sensorsC=[], sensorsD=[];"));
+  client.println(F("  let downsampleRate = 12;"));
+  client.println(F("  lines.forEach((line, idx) => {"));
+  client.println(F("    if (idx % downsampleRate !== 0) return;"));
+  client.println(F("    let [date, time, a, b, c, d] = line.split(',');"));
+  client.println(F("    let dt = new Date(date + ' ' + time);"));
+  client.println(F("    if(dt.getTime() >= limit){"));
+  client.println(F("      labels.push(date + ' ' + time);"));
+  client.println(F("      sensorsA.push(parseFloat(a) || null);"));
+  client.println(F("      sensorsB.push(parseFloat(b) || null);"));
+  client.println(F("      sensorsC.push(parseFloat(c) || null);"));
+  client.println(F("      sensorsD.push(parseFloat(d) || null);"));
+  client.println(F("    }"));
+  client.println(F("  });"));
+  client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD};"));
+  client.println(F("}"));
+
+  client.print(F("const threshold = "));
+  client.print(tempThreshold, 1);
+  client.println(F(";"));
+  client.println(F("const margin = 3.0;"));
+
+  client.println(F("async function updateCharts(){"));
+  client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value);"));
+  client.println(F("  let rangeH = parseInt(document.getElementById('humidRange').value);"));
+  client.println(F("  let tempData = await fetchData('temp.csv', rangeT);"));
+  client.println(F("  let humidData = await fetchData('humid.csv', rangeH);"));
+
+  client.println(F("  if(tempChart) tempChart.destroy();"));
+  client.println(F("  tempChart = new Chart(document.getElementById('tempChart'), {"));
+  client.println(F("    type: 'line',"));
+  client.println(F("    data: {"));
+  client.println(F("      labels: tempData.labels,"));
+  client.println(F("      datasets: ["));
+  client.println(F("        {label: 'Sensor A', data: tempData.sensorsA, borderColor: 'red', fill: false},"));
+  client.println(F("        {label: 'Sensor B', data: tempData.sensorsB, borderColor: 'blue', fill: false},"));
+  client.println(F("        {label: 'Sensor C', data: tempData.sensorsC, borderColor: 'green', fill: false},"));
+  client.println(F("        {label: 'Sensor D', data: tempData.sensorsD, borderColor: 'orange', fill: false},"));
+  client.println(F("        {label: 'Threshold', data: Array(tempData.labels.length).fill(threshold), borderColor: 'black', borderDash: [5,5], pointRadius: 0},"));
+  client.println(F("        {label: 'High Threshold', data: Array(tempData.labels.length).fill(threshold + margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0},"));
+  client.println(F("        {label: 'Low Threshold', data: Array(tempData.labels.length).fill(threshold - margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0}"));
+  client.println(F("      ]"));
+  client.println(F("    },"));
+  client.println(F("    options: {"));
+  client.println(F("      responsive: true,"));
+  client.println(F("      maintainAspectRatio: false,"));
+  client.println(F("      scales: { y: { ticks: { stepSize: 1.0 } } }"));
+  client.println(F("    }"));
+  client.println(F("  });"));
+
+  client.println(F("  if(humidChart) humidChart.destroy();"));
+  client.println(F("  humidChart = new Chart(document.getElementById('humidChart'), {"));
+  client.println(F("    type: 'line',"));
+  client.println(F("    data: {"));
+  client.println(F("      labels: humidData.labels,"));
+  client.println(F("      datasets: ["));
+  client.println(F("        {label: 'Sensor A', data: humidData.sensorsA, borderColor: 'red', fill: false},"));
+  client.println(F("        {label: 'Sensor B', data: humidData.sensorsB, borderColor: 'blue', fill: false},"));
+  client.println(F("        {label: 'Sensor C', data: humidData.sensorsC, borderColor: 'green', fill: false},"));
+  client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: 'orange', fill: false}"));
+  client.println(F("      ]"));
+  client.println(F("    },"));
+  client.println(F("    options: {"));
+  client.println(F("      responsive: true,"));
+  client.println(F("      maintainAspectRatio: false"));
+  client.println(F("    }"));
+  client.println(F("  });"));
+
+  client.println(F("  updateLastUpdate();"));
+  client.println(F("}"));
+
+  client.println(F("document.getElementById('tempRange').addEventListener('change', updateCharts);"));
+  client.println(F("document.getElementById('humidRange').addEventListener('change', updateCharts);"));
+  client.println(F("setInterval(updateCharts, 300000);"));
+  client.println(F("updateCharts();"));
+
+  client.println(F("function updateLastUpdate() {"));
+  client.println(F("  const now = new Date();"));
+  client.println(F("  const formatted = now.toLocaleString();"));
+  client.println(F("  document.getElementById('lastUpdate').textContent = formatted;"));
+  client.println(F("}"));
+
+  client.println(F("</script></body></html>"));
+}
+
 void setup() {
   Serial.begin(9600);
-  while (!Serial)
-    ;
+  while (!Serial);
 
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
@@ -296,7 +662,9 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
-  // ----- STARTUP SEQUENCE -----
+  // Initialize connection tracking
+  initConnectionTracking();
+
   for (int i = 0; i < 5; i++) {
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -343,17 +711,15 @@ void setup() {
   lcd.print("Standby");
   delay(10000);
   lcd.clear();
-  // ----- END STARTUP SEQUENCE -----
 
   dhtA.begin();
   dhtB.begin();
   dhtC.begin();
   dhtD.begin();
 
-  // Load threshold from EEPROM
   EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
   if (tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
-    tempThreshold = DEFAULT_TEMP_THRESHOLD  ;
+    tempThreshold = DEFAULT_TEMP_THRESHOLD;
   }
 
   pinMode(10, OUTPUT);
@@ -378,8 +744,7 @@ void setup() {
   delay(1000);
   Serial.print("Ethernet IP: ");
   Serial.println(Ethernet.localIP());
-  lcd.clear(); 
-
+  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Ethernet IP: ");
   lcd.setCursor(0, 2);
@@ -397,243 +762,30 @@ void setup() {
     lcd.setCursor(0, 0);
     lcd.print("SD Init Failed!");
 
-    // Blink red LED fast forever
     while (true) {
       digitalWrite(RED_LED_PIN, HIGH);
       delay(500);
       digitalWrite(RED_LED_PIN, LOW);
       delay(500);
     }
-
-
-
-
-
-
   } else {
     Serial.println("SD card initialized.");
     createCsvHeaderIfNeeded();
   }
 
   lastDisplaySwitch = millis();
-
-  server.begin();  // Start Ethernet server for web requests
+  server.begin();
 }
-
-void serveFile(EthernetClient &client, const char *filename, const char *contentType) {
-  if (SD.exists(filename)) {
-    File file = SD.open(filename, FILE_READ);
-    client.println("HTTP/1.1 200 OK");
-    client.print("Content-Type: ");
-    client.println(contentType);
-    client.println("Connection: close");
-    client.println();
-
-    while (file.available()) {
-      client.write(file.read());
-    }
-    file.close();
-  } else {
-    client.println("HTTP/1.1 404 Not Found");
-    client.println("Content-Type: text/plain");
-    client.println("Connection: close");
-    client.println();
-    client.println("File not found");
-  }
-}
-void serveRootPage(EthernetClient &client) {
-  String lastUpdate = getDateString() + " " + getTimeString();
-
-  client.println(F("HTTP/1.1 200 OK"));
-  client.println(F("Content-Type: text/html"));
-  client.println(F("Connection: close"));
-  client.println();
-
-  client.println(F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"));
-  // Removed meta refresh line here:
-  // client.println(F("<meta http-equiv='refresh' content='300'>"));
-  client.println(F("<title>Seegrid Aging Room Data</title>"));
-  client.println(F("<style>"));
-  client.println(F("body{font-family:sans-serif;background:#f4f4f4;padding:20px;}"));
-  client.println(F(".tab{display:inline-block;padding:10px 20px;margin:5px;background:#ccc;cursor:pointer;}"));
-  client.println(F(".tab.active{background:#999;}"));
-  client.println(F(".tab-content{display:none;}"));
-  client.println(F(".tab-content.active{display:block;}"));
-  client.println(F("canvas { width: 100% !important; height: auto !important; }"));
-  client.println(F("button { margin-left: 10px; }"));
-  client.println(F("</style>"));
-  client.println(F("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"));
-  client.println(F("</head><body>"));
-
-  client.println(F("<h2>Seegrid Aging Room Data</h2>"));
-  // Modified last update with a span and id for JS update:
-  client.print(F("<p>Last update: <span id='lastUpdate'>"));
-  client.print(lastUpdate);
-  client.println(F("</span></p>"));
-
-  // Tabs
-  client.println(F("<div>"));
-  client.println(F("<div class='tab active' onclick=\"showTab('temp', event)\">Temperature</div>"));
-  client.println(F("<div class='tab' onclick=\"showTab('humid', event)\">Humidity</div>"));
-  client.println(F("</div>"));
-
-  // Temperature Tab Content
-  client.println(F("<div id='temp' class='tab-content active'>"));
-  client.println(F("<label>Range: <select id='tempRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
-  client.println(F("<button onclick='downloadChart(tempChart, \"temp\")'>Export Temperature PNG</button>"));
-  client.println(F("<button onclick=\"window.location='/temp.csv'\">Download Temperature CSV</button>"));
-  client.println(F("<button onclick='confirmDelete(\"temp\")'>Delete Temperature CSV</button>"));
-  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
-  client.println(F("<br><div style='max-width:1000px; height:600px;'><canvas id='tempChart'></canvas></div></div>"));
-
-  // Humidity Tab Content
-  client.println(F("<div id='humid' class='tab-content'>"));
-  client.println(F("<label>Range: <select id='humidRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
-  client.println(F("<button onclick='downloadChart(humidChart, \"humid\")'>Export Humidity PNG</button>"));
-  client.println(F("<button onclick=\"window.location='/humid.csv'\">Download Humidity CSV</button>"));
-  client.println(F("<button onclick='confirmDelete(\"humid\")'>Delete Humidity CSV</button>"));
-  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
-  client.println(F("<br><div style='max-width:1000px; height:600px;'><canvas id='humidChart'></canvas></div></div>"));
-
-  // Scripts
-  client.println(F("<script>"));
-  client.println(F("let tempChart, humidChart;"));
-
-  client.println(F("function showTab(id, evt){"));
-  client.println(F("  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));"));
-  client.println(F("  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));"));
-  client.println(F("  document.getElementById(id).classList.add('active');"));
-  client.println(F("  evt.target.classList.add('active');"));
-  client.println(F("}"));
-
-  client.println(F("function downloadChart(chart, label){"));
-  client.println(F("  if(!chart) return;"));
-  client.println(F("  const link = document.createElement('a');"));
-  client.println(F("  link.download = label + '_chart.png';"));
-  client.println(F("  link.href = chart.toBase64Image();"));
-  client.println(F("  link.click();"));
-  client.println(F("}"));
-
-  client.println(F("function confirmDelete(type) {"));
-  client.println(F("  if(confirm('Are you sure you want to delete the ' + type + ' CSV file?')) {"));
-  client.println(F("    window.location = '/delete_' + type;"));
-  client.println(F("  }"));
-  client.println(F("}"));
-
-  // Fetch CSV data and parse, filtering by selected days
-  client.println(F("async function fetchData(filename, rangeDays) {"));
-  client.println(F("  let res = await fetch('/' + filename);"));
-  client.println(F("  let text = await res.text();"));
-  client.println(F("  let lines = text.trim().split('\\n').slice(1);"));
-  client.println(F("  let limit = new Date().getTime() - rangeDays * 86400000;"));
-  client.println(F("  let labels=[], sensorsA=[], sensorsB=[], sensorsC=[], sensorsD=[];"));
-  client.println(F("  let downsampleRate = 12; // every 12th reading (1/hour for 5-min logs)"));
-  client.println(F("  lines.forEach((line, idx) => {"));
-  client.println(F("    if (idx % downsampleRate !== 0) return;"));
-  client.println(F("    let [date, time, a, b, c, d] = line.split(',');"));
-  client.println(F("    let dt = new Date(date + ' ' + time);"));
-  client.println(F("    if(dt.getTime() >= limit){"));
-  client.println(F("      labels.push(date + ' ' + time);"));
-  client.println(F("      sensorsA.push(parseFloat(a) || null);"));
-  client.println(F("      sensorsB.push(parseFloat(b) || null);"));
-  client.println(F("      sensorsC.push(parseFloat(c) || null);"));
-  client.println(F("      sensorsD.push(parseFloat(d) || null);"));
-  client.println(F("    }"));
-  client.println(F("  });"));
-  client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD};"));
-  client.println(F("}"));
-
-  // Update charts based on selected ranges
-  client.print(F("const threshold = "));
-  client.print(tempThreshold, 1);
-  client.println(F(";"));
-
-  client.println(F("const margin = 3.0;"));
-
-  client.println(F("async function updateCharts(){"));
-
-  client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value);"));
-  client.println(F("  let rangeH = parseInt(document.getElementById('humidRange').value);"));
-
-  client.println(F("  let tempData = await fetchData('temp.csv', rangeT);"));
-  client.println(F("  let humidData = await fetchData('humid.csv', rangeH);"));
-
-  client.println(F("  if(tempChart) tempChart.destroy();"));
-  client.println(F("  tempChart = new Chart(document.getElementById('tempChart'), {"));
-  client.println(F("    type: 'line',"));
-  client.println(F("    data: {"));
-  client.println(F("      labels: tempData.labels,"));
-  client.println(F("      datasets: ["));
-  client.println(F("        {label: 'Sensor A', data: tempData.sensorsA, borderColor: 'red', fill: false},"));
-  client.println(F("        {label: 'Sensor B', data: tempData.sensorsB, borderColor: 'blue', fill: false},"));
-  client.println(F("        {label: 'Sensor C', data: tempData.sensorsC, borderColor: 'green', fill: false},"));
-  client.println(F("        {label: 'Sensor D', data: tempData.sensorsD, borderColor: 'orange', fill: false},"));
-  client.println(F("        {label: 'Threshold', data: Array(tempData.labels.length).fill(threshold), borderColor: 'black', borderDash: [5,5], pointRadius: 0},"));
-  client.println(F("        {label: 'High Threshold', data: Array(tempData.labels.length).fill(threshold + margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0},"));
-  client.println(F("        {label: 'Low Threshold', data: Array(tempData.labels.length).fill(threshold - margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0}"));
-  client.println(F("      ]"));
-  client.println(F("    },"));
-  client.println(F("    options: {"));
-  client.println(F("      responsive: true,"));
-  client.println(F("      maintainAspectRatio: false,"));
-  client.println(F("      scales: { y: { ticks: { stepSize: 1.0 } } }"));
-  client.println(F("    }"));
-  client.println(F("  });"));
-
-  client.println(F("  if(humidChart) humidChart.destroy();"));
-  client.println(F("  humidChart = new Chart(document.getElementById('humidChart'), {"));
-  client.println(F("    type: 'line',"));
-  client.println(F("    data: {"));
-  client.println(F("      labels: humidData.labels,"));
-  client.println(F("      datasets: ["));
-  client.println(F("        {label: 'Sensor A', data: humidData.sensorsA, borderColor: 'red', fill: false},"));
-  client.println(F("        {label: 'Sensor B', data: humidData.sensorsB, borderColor: 'blue', fill: false},"));
-  client.println(F("        {label: 'Sensor C', data: humidData.sensorsC, borderColor: 'green', fill: false},"));
-  client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: 'orange', fill: false}"));
-  client.println(F("      ]"));
-  client.println(F("    },"));
-  client.println(F("    options: {"));
-  client.println(F("      responsive: true,"));
-  client.println(F("      maintainAspectRatio: false"));
-  client.println(F("    }"));
-  client.println(F("  });"));
-
-  // Add updating of last update time here:
-  client.println(F("  updateLastUpdate();"));
-
-  client.println(F("}"));
-
-  // Event listeners for range selectors
-  client.println(F("document.getElementById('tempRange').addEventListener('change', updateCharts);"));
-  client.println(F("document.getElementById('humidRange').addEventListener('change', updateCharts);"));
-
-  // Periodic update every 5 minutes + initial update
-  client.println(F("setInterval(updateCharts, 300000);"));
-  client.println(F("updateCharts();"));
-
-  // Add the last update timestamp function
-  client.println(F("function updateLastUpdate() {"));
-  client.println(F("  const now = new Date();"));
-  client.println(F("  const formatted = now.toLocaleString();"));
-  client.println(F("  document.getElementById('lastUpdate').textContent = formatted;"));
-  client.println(F("}"));
-
-  client.println(F("</script></body></html>"));
-}
-
-
-
 
 void loop() {
   unsigned long now = millis();
-  // --- Update internal clock every second ---
+  
   static unsigned long lastEpochUpdate = 0;
   if (now - lastEpochUpdate >= 1000) {
     currentEpoch++;
     lastEpochUpdate = now;
   }
 
-  // --- Threshold Menu Button Hold ---
   if (digitalRead(BUTTON_PIN) == LOW) {
     unsigned long holdStart = millis();
     while (digitalRead(BUTTON_PIN) == LOW) {
@@ -655,7 +807,6 @@ void loop() {
         digitalWrite(GREEN_LED_PIN, LOW);
         delay(250);
       }
-
 
       while (digitalRead(BUTTON_PIN) == LOW) {
         if (millis() - lastBlinkToggle >= 250) {
@@ -692,7 +843,6 @@ void loop() {
 
       EEPROM.put(0, tempThreshold);
 
-      // Save confirmation — red blinks
       for (int i = 0; i < 10; i++) {
         digitalWrite(RED_LED_PIN, HIGH);
         digitalWrite(GREEN_LED_PIN, LOW);
@@ -701,7 +851,6 @@ void loop() {
         delay(250);
       }
 
-      // Show old/new threshold — both blink
       lcd.clear();
       for (int i = 0; i < 20; i++) {
         lcd.setCursor(0, 0);
@@ -724,7 +873,6 @@ void loop() {
     }
   }
 
-  // --- Sensor Readings ---
   if (now - lastSensorRead >= sensorReadInterval) {
     tA = dhtA.readTemperature();
     if (isnan(tA)) {
@@ -770,19 +918,22 @@ void loop() {
 
     lastSensorRead = now;
   }
-  // --- LED Logic ---
+
   bool tempError = isnan(tA) || isnan(tB) || isnan(tC) || isnan(tD);
   bool tempOutOfRange =
-    (!isnan(tA) && abs(tA - tempThreshold) > thresholdMargin) || (!isnan(tB) && abs(tB - tempThreshold) > thresholdMargin) || (!isnan(tC) && abs(tC - tempThreshold) > thresholdMargin) || (!isnan(tD) && abs(tD - tempThreshold) > thresholdMargin);
+    (!isnan(tA) && abs(tA - tempThreshold) > thresholdMargin) || 
+    (!isnan(tB) && abs(tB - tempThreshold) > thresholdMargin) || 
+    (!isnan(tC) && abs(tC - tempThreshold) > thresholdMargin) || 
+    (!isnan(tD) && abs(tD - tempThreshold) > thresholdMargin);
 
   unsigned long blinkInterval;
 
   if (tempError) {
-    blinkInterval = blinkIntervalFast;  // Fast blink for error
+    blinkInterval = blinkIntervalFast;
   } else if (tempOutOfRange) {
-    blinkInterval = blinkIntervalNormal;  // Slow blink for out of range
+    blinkInterval = blinkIntervalNormal;
   } else {
-    blinkInterval = 0;  // No blink when normal
+    blinkInterval = 0;
   }
 
   if (blinkInterval > 0 && now - lastBlinkToggle >= blinkInterval) {
@@ -801,9 +952,6 @@ void loop() {
     digitalWrite(RED_LED_PIN, LOW);
   }
 
-
-
-  // --- LCD Display ---
   if (now - lastDisplaySwitch >= 10000) {
     displayMode = !displayMode;
     lcd.clear();
@@ -818,20 +966,16 @@ void loop() {
     lcd.print("Temperature       ");
     lcd.setCursor(0, 2);
     lcd.print("A: ");
-    lcd.print(isnan(tA) ? (blinkState ? "ERR  " : "     ") : (abs(tA - tempThreshold) > thresholdMargin && blinkState) ? "     "
-                                                                                                                       : String(tA, 1) + " C");
+    lcd.print(isnan(tA) ? (blinkState ? "ERR  " : "     ") : (abs(tA - tempThreshold) > thresholdMargin && blinkState) ? "     " : String(tA, 1) + " C");
     lcd.setCursor(10, 2);
     lcd.print("B: ");
-    lcd.print(isnan(tB) ? (blinkState ? "ERR  " : "     ") : (abs(tB - tempThreshold) > thresholdMargin && blinkState) ? "     "
-                                                                                                                       : String(tB, 1) + " C");
+    lcd.print(isnan(tB) ? (blinkState ? "ERR  " : "     ") : (abs(tB - tempThreshold) > thresholdMargin && blinkState) ? "     " : String(tB, 1) + " C");
     lcd.setCursor(0, 3);
     lcd.print("C: ");
-    lcd.print(isnan(tC) ? (blinkState ? "ERR  " : "     ") : (abs(tC - tempThreshold) > thresholdMargin && blinkState) ? "     "
-                                                                                                                       : String(tC, 1) + " C");
+    lcd.print(isnan(tC) ? (blinkState ? "ERR  " : "     ") : (abs(tC - tempThreshold) > thresholdMargin && blinkState) ? "     " : String(tC, 1) + " C");
     lcd.setCursor(10, 3);
     lcd.print("D: ");
-    lcd.print(isnan(tD) ? (blinkState ? "ERR  " : "     ") : (abs(tD - tempThreshold) > thresholdMargin && blinkState) ? "     "
-                                                                                                                       : String(tD, 1) + " C");
+    lcd.print(isnan(tD) ? (blinkState ? "ERR  " : "     ") : (abs(tD - tempThreshold) > thresholdMargin && blinkState) ? "     " : String(tD, 1) + " C");
   } else {
     lcd.setCursor(0, 1);
     lcd.print("Humidity          ");
@@ -849,31 +993,57 @@ void loop() {
     lcd.print(isnan(hD) ? (blinkState ? "ERR  " : "     ") : String(hD, 1) + " %");
   }
 
-  // --- NTP Time Check every 24h ---
   if (millis() - lastNtpCheck >= ntpInterval) {
     requestNtpTime();
     lastNtpCheck = millis();
   }
 
-  // --- CSV File Write every 5 min ---
   if (millis() - lastCsvWrite >= csvWriteInterval) {
     appendCsvData();
     lastCsvWrite = millis();
   }
 
-  // --- Web Server Code Injection ---
+  // Periodic cleanup of stale connections
+  static unsigned long lastCleanup = 0;
+  if (millis() - lastCleanup > 30000) {
+    cleanupStaleConnections();
+    lastCleanup = millis();
+  }
+
   EthernetClient client = server.available();
   if (client) {
+    IPAddress clientIP = client.remoteIP();
+    
+    if (!canAcceptConnection(clientIP)) {
+      sendServiceUnavailable(client);
+      delay(1);
+      client.stop();
+      return;
+    }
+
     bool currentLineIsBlank = true;
     String httpRequest = "";
+    unsigned long connectionStart = millis();
+    const unsigned long requestTimeout = 5000;
 
     while (client.connected()) {
+      if (millis() - connectionStart > requestTimeout) {
+        Serial.println("Request timeout");
+        break;
+      }
+
       if (client.available()) {
         char c = client.read();
         httpRequest += c;
 
+        if (httpRequest.length() > 512) {
+          client.println("HTTP/1.1 413 Request Entity Too Large");
+          client.println("Connection: close");
+          client.println();
+          break;
+        }
+
         if (c == '\n' && currentLineIsBlank) {
-          // --- Protect temp.csv ---
           if (httpRequest.startsWith("GET /temp.csv")) {
             if (!checkAuth(httpRequest)) {
               client.println("HTTP/1.1 401 Unauthorized");
@@ -886,7 +1056,6 @@ void loop() {
               serveFile(client, "temp.csv", "text/csv");
             }
             break;
-          // --- Protect humid.csv ---
           } else if (httpRequest.startsWith("GET /humid.csv")) {
             if (!checkAuth(httpRequest)) {
               client.println("HTTP/1.1 401 Unauthorized");
@@ -899,7 +1068,6 @@ void loop() {
               serveFile(client, "humid.csv", "text/csv");
             }
             break;
-          // --- Protect delete_temp ---
           } else if (httpRequest.startsWith("GET /delete_temp")) {
             if (!checkAuth(httpRequest)) {
               client.println("HTTP/1.1 401 Unauthorized");
@@ -918,7 +1086,6 @@ void loop() {
               client.println("Temperature CSV deleted.");
             }
             break;
-          // --- Protect delete_humid ---
           } else if (httpRequest.startsWith("GET /delete_humid")) {
             if (!checkAuth(httpRequest)) {
               client.println("HTTP/1.1 401 Unauthorized");
@@ -937,8 +1104,7 @@ void loop() {
               client.println("Humidity CSV deleted.");
             }
             break;
-          // --- Protect root page ---
-          } else if (httpRequest.startsWith("GET /")) {
+          } else if (httpRequest.startsWith("GET / ") || httpRequest.startsWith("GET / HTTP")) {
             if (!checkAuth(httpRequest)) {
               client.println("HTTP/1.1 401 Unauthorized");
               client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
@@ -967,45 +1133,9 @@ void loop() {
         }
       }
     }
+    
     delay(1);
     client.stop();
+    releaseConnection(clientIP);
   }
 }
-
-#define MAX_CLIENTS 10
-#define MAX_PER_IP 3
-
-struct ClientInfo {
-  IPAddress ip;
-  uint8_t count;
-};
-
-ClientInfo clientList[MAX_CLIENTS];
-uint8_t globalConnectionCount = 0;
-
-bool canAcceptConnection(IPAddress ip) {
-  // Check global limit
-  if (globalConnectionCount >= MAX_CLIENTS) return false;
-
-  // Check per-IP limit
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    if (clientList[i].ip == ip) {
-      if (clientList[i].count >= MAX_PER_IP) return false;
-      clientList[i].count++;
-      globalConnectionCount++;
-      return true;
-    }
-  }
-  // New IP, add to list
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    if (clientList[i].count == 0) {
-      clientList[i].ip = ip;
-      clientList[i].count = 1;
-      globalConnectionCount++;
-      return true;
-    }
-  }
-  return false; // No space for new IP
-}
-
-// On connection close, decrement counts accordingly
