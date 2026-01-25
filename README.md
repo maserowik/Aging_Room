@@ -174,15 +174,46 @@ The device attempts DHCP first, falls back to `192.168.16.70` if DHCP fails.
 
 ## Security Features
 
+### Authentication
 - **SHA256 Password Hashing**: Passwords never stored in plaintext
-- **HTTP Basic Authentication**: All endpoints protected
-- **Connection Rate Limiting**:
-  - Maximum 8 global connections
-  - Maximum 3 connections per IP address
-  - 5-minute connection timeout
-  - Automatic stale connection cleanup
-- **Request Size Limiting**: 512 byte maximum request size
-- **Request Timeout**: 5 second timeout per request
+- **HTTP Basic Authentication**: All endpoints protected (root page, CSV downloads, file deletion)
+
+### IP-Based Connection Limiting
+
+The system implements sophisticated connection tracking to prevent denial-of-service attacks and resource exhaustion:
+
+**How It Works:**
+1. **Connection Tracking**: Each incoming connection is tracked by IP address in a 15-slot array
+2. **Global Limit**: Maximum of 8 simultaneous connections across all clients
+3. **Per-IP Limit**: Maximum of 3 simultaneous connections from any single IP address
+4. **Timeout Management**: Connections that remain idle for 5 minutes are automatically released
+5. **Automatic Cleanup**: Stale connections are purged every 30 seconds
+
+**What Happens When Limits Are Reached:**
+- New connections from rate-limited IPs receive HTTP 503 (Service Unavailable)
+- "Retry-After: 60" header suggests clients wait before retrying
+- Connection slots are released immediately when clients disconnect properly
+- Failed or abandoned connections are cleaned up automatically
+
+**Connection States:**
+- **Accepted**: IP has available slots, global limit not reached
+- **Rejected**: Either per-IP limit (3) or global limit (8) exceeded
+- **Released**: Client disconnected, slot freed for reuse
+- **Timeout**: Connection idle for 5+ minutes, automatically released
+
+**Monitoring:**
+Serial output shows real-time connection tracking:
+```
+Connection accepted. IP: 192.168.1.100 | Global: 3/8
+Per-IP limit reached for: 192.168.1.100 (3 connections)
+Connection released. IP: 192.168.1.100 | Global: 2/8
+```
+
+This prevents a single malicious client from monopolizing the server or overwhelming the Arduino's limited resources.
+
+### Additional Security
+- **Request Size Limiting**: 512 byte maximum request size prevents buffer overflow
+- **Request Timeout**: 5 second timeout per request prevents slowloris attacks
 
 ## Data Logging
 
