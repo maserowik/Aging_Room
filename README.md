@@ -62,7 +62,7 @@ cd aging-room-monitor
 
 ### 3. Configure Network
 
-Edit `Aging_Room.ino` lines 40-43 if you need to change the static IP fallback:
+Edit `Aging_Room.ino` lines 31-34 if you need to change the static IP fallback:
 
 ```cpp
 IPAddress ip(192, 168, 16, 70);      // Static IP
@@ -82,7 +82,7 @@ IPAddress dns(192, 168, 16, 1);       // DNS server
 1. Visit https://emn178.github.io/online-tools/sha256.html
 2. Enter your desired password in the input field
 3. Copy the resulting 64-character hex hash
-4. Edit `config.h` line 48:
+4. Edit `config.h` line 56:
    ```cpp
    #define AUTH_PASSWORD_SHA256 "your_64_character_hash_here"
    ```
