@@ -26,18 +26,18 @@ Arduino-based temperature and humidity monitoring system with web interface, dat
 
 ## Pin Configuration
 
-| Component      | Pin | Notes        |
-|----------------|-----|--------------|
-| DHT22 Sensor A | 2   | Digital      |
-| DHT22 Sensor B | 3   | Digital      |
-| DHT22 Sensor C | 5   | Digital      |
-| DHT22 Sensor D | 6   | Digital      |
-| Green LED      | 7   | Digital      |
-| Red LED        | 8   | Digital      |
-| Ethernet CS    | 10  | SPI          |
-| Button         | 13  | INPUT_PULLUP |
-| SD Card CS     | 4   | SPI          |
-| LCD            | I2C | SDA/SCL      |
+| Component | Pin | Notes |
+|-----------|-----|-------|
+| DHT22 Sensor A | 2 | Digital |
+| DHT22 Sensor B | 3 | Digital |
+| DHT22 Sensor C | 5 | Digital |
+| DHT22 Sensor D | 6 | Digital |
+| Green LED | 7 | Digital |
+| Red LED | 8 | Digital |
+| Ethernet CS | 10 | SPI |
+| Button | 13 | INPUT_PULLUP |
+| SD Card CS | 4 | SPI |
+| LCD | I2C | SDA/SCL |
 
 ## Installation
 
@@ -56,13 +56,13 @@ Open Arduino IDE and install these libraries via Library Manager:
 ### 2. Clone Repository
 
 ```bash
-git clone https://gitlab.com/yourusername/aging_room.git
-cd aging_room
+git clone https://github.com/yourusername/aging-room-monitor.git
+cd aging-room-monitor
 ```
 
 ### 3. Configure Network
 
-Edit `Aging_Room.ino` lines 31-34 if you need to change the static IP fallback:
+Edit `Aging_Room.ino` lines 40-43 if you need to change the static IP fallback:
 
 ```cpp
 IPAddress ip(192, 168, 16, 70);      // Static IP
@@ -82,7 +82,7 @@ IPAddress dns(192, 168, 16, 1);       // DNS server
 1. Visit https://emn178.github.io/online-tools/sha256.html
 2. Enter your desired password in the input field
 3. Copy the resulting 64-character hex hash
-4. Edit `config.h` line 56:
+4. Edit `config.h` line 48:
    ```cpp
    #define AUTH_PASSWORD_SHA256 "your_64_character_hash_here"
    ```
@@ -134,7 +134,7 @@ After boot, the device will display its IP address on:
 1. LCD screen for 10 seconds
 2. Serial Monitor (9600 baud)
 
-The device attempts DHCP first, falls back to `192.168.16.70` if DHCP fails.  
+The device attempts DHCP first, falls back to `192.168.16.70` if DHCP fails.
 
 ### Accessing Web Interface
 
@@ -164,13 +164,26 @@ The device attempts DHCP first, falls back to `192.168.16.70` if DHCP fails.
 7. Red LED flashes rapidly (10 times) to confirm save
 8. Device displays old and new threshold for 10 seconds
 
+**LED Behavior During Adjustment:**
+
+| Phase | Green LED | Red LED | Duration |
+|-------|-----------|---------|----------|
+| Holding button (0-5s) | Alternates 250ms | Alternates 250ms | 5 seconds |
+| Entry confirmation | Flashes 10 times | OFF | ~5 seconds |
+| Adjusting (holding) | Blinks 250ms | OFF | Until release |
+| Save confirmation | OFF | Flashes 10 times | ~5 seconds |
+| Final confirmation | Flashes 20 times | Flashes 20 times | ~20 seconds |
+| Return to normal | Status dependent | Status dependent | Ongoing |
+
+**Total adjustment process: ~35 seconds minimum**
+
 ### LED Indicator Meanings
 
-| Pattern                | Meaning                               |
-|---------               |---------                              |
-| Solid Green            | All sensors within threshold ±3°C     |
+| Pattern | Meaning |
+|---------|---------|
+| Solid Green | All sensors within threshold ±3°C |
 | Slow Red Blink (500ms) | One or more sensors outside threshold |
-| Fast Red Blink (250ms) | Sensor error or read failure          |
+| Fast Red Blink (250ms) | Sensor error or read failure |
 
 ## Security Features
 
