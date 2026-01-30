@@ -56,7 +56,7 @@ Open Arduino IDE and install these libraries via Library Manager:
 ### 2. Clone Repository
 
 ```bash
-git clone https://github.com/yourusername/aging-room-monitor.git
+git clone https://gitlab.com/seegrid/quality/Aging_Room
 cd aging-room-monitor
 ```
 
