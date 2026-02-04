@@ -28,9 +28,16 @@ bool checkAuth(String httpRequest) {
   // Check username
   if (!username.equals(AUTH_USERNAME)) return false;
   
-  // Hash the provided password and compare to stored hash
+  // Hash the provided password with salt and compare to stored hash
+  // SECURITY: This implements salted SHA256 hashing to prevent rainbow table attacks
+  // The salt is prepended to the password before hashing
   SHA256 sha256;
   sha256.reset();
+  
+  // Add salt first (prepend method)
+  sha256.update((const byte*)AUTH_SALT, strlen(AUTH_SALT));
+  
+  // Add password
   sha256.update((const byte*)password.c_str(), password.length());
   
   byte hash[32];
