@@ -238,7 +238,6 @@ Aging_Room/
 
 ## Memory Architecture and Data Persistence
 
-**Management Question Answered:**
 *"Will EEPROM on an Arduino allow credentials to persist in the event of a power outage?"*
 
 **Short Answer:** No - authentication credentials are **NOT** stored in EEPROM. They are stored in **Flash memory**, which also persists through power outages but is more secure than EEPROM.
