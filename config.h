@@ -53,8 +53,11 @@
 
 // Authentication
 #define AUTH_USERNAME "Seegrid"
-#define AUTH_SALT "SeegridAgingRoom2026"  // CHANGE THIS to your unique salt
-#define AUTH_PASSWORD_SHA256 "8b3d7f4a1c2e9f6b5a8d3c1e4f7a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1d4e7f0a"
+//#define AUTH_SALT "SeegridAgingRoom2026"  // CHANGE THIS to your unique salt
+#define AUTH_SALT "216_Aging_Room"
+//#define AUTH_PASSWORD_SHA256 "8b3d7f4a1c2e9f6b5a8d3c1e4f7a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1d4e7f0a"
+#define AUTH_PASSWORD_SHA256 "8a0648ad941ea0bf552d4d18e6228fb79c7b87830507c1aea708f68a2db8f831"
+
 
 // Temperature Threshold
 #define THRESHOLD_MARGIN 3.0

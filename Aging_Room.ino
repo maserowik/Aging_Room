@@ -28,12 +28,11 @@ void setup() {
   if (Ethernet.begin(mac) == 0) {
     Serial.println("DHCP failed. Trying static IP...");
 
-    IPAddress ip(192, 168, 16, 70);
-    IPAddress gateway(192, 168, 16, 1);
-    IPAddress subnet(255, 255, 255, 0);
-    IPAddress dns(192, 168, 16, 1);
-
-    Ethernet.begin(mac, ip, dns, gateway, subnet);
+     IPAddress ip(192, 168, 48, 20);
+     IPAddress gateway(192, 168, 48, 1);
+     IPAddress subnet(255, 255, 255, 0);
+    
+    Ethernet.begin(mac, ip, gateway, subnet);
     Serial.println("Static IP assigned.");
   } else {
     Serial.println("DHCP successful.");

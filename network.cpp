@@ -1,7 +1,7 @@
 #include "network.h"
 
 // Global variables
-byte mac[] = { 0xA8, 0x61, 0x0A, 0xAE, 0x30, 0x21 };
+byte mac[] = { 0xA8, 0x61, 0x0A, 0xAE, 0x31, 0x24 };
 EthernetUDP Udp;
 EthernetServer server(SERVER_PORT);
 byte packetBuffer[NTP_PACKET_SIZE];
@@ -192,7 +192,8 @@ bool isDST(int year, int month, int day, int weekday) {
 }
 
 void requestNtpTime() {
-  IPAddress ntpIP(129, 6, 15, 28);
+  // IPAddress ntpIP(129, 6, 15, 28);
+  IPAddress ntpIP(192, 168, 80, 8);
   Serial.println("Sending NTP request...");
   sendNTPpacket(ntpIP);
 
