@@ -6,7 +6,7 @@
 #include "storage.h"
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   while (!Serial);
 
   pinMode(RED_LED_PIN, OUTPUT);

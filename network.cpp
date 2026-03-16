@@ -1,7 +1,7 @@
 #include "network.h"
 
 // Global variables
-byte mac[] = { 0xA8, 0x61, 0x0A, 0xAE, 0x31, 0x24 };
+byte mac[] = { 0xA8, 0x61, 0xDA, 0xAE, 0xE1, 0x24 };
 EthernetUDP Udp;
 EthernetServer server(SERVER_PORT);
 byte packetBuffer[NTP_PACKET_SIZE];
