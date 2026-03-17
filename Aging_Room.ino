@@ -115,7 +115,7 @@ void loop() {
         char c = client.read();
         httpRequest += c;
 
-        if (httpRequest.length() > 512) {
+        if (httpRequest.length() > 1024) {
           client.println("HTTP/1.1 413 Request Entity Too Large");
           client.println("Connection: close");
           client.println();

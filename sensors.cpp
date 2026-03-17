@@ -2,10 +2,10 @@
 #include "display.h"
 
 // Global sensor objects
-DHT dhtA(2, DHTTYPE);
-DHT dhtB(3, DHTTYPE);
-DHT dhtC(5, DHTTYPE);
-DHT dhtD(6, DHTTYPE);
+DHT dhtA(40, DHTTYPE);
+DHT dhtB(41, DHTTYPE);
+DHT dhtC(30, DHTTYPE);
+DHT dhtD(31, DHTTYPE);
 
 // Sensor data
 float tA = NAN, tB = NAN, tC = NAN, tD = NAN;

@@ -18,9 +18,9 @@
 #define EEPROM_TEMP_THRESHOLD_ADDR 0
 
 // Threshold Configuration
-#define MIN_THRESHOLD 20
-#define MAX_THRESHOLD 50
-#define DEFAULT_TEMP_THRESHOLD 20
+#define MIN_THRESHOLD 35
+#define MAX_THRESHOLD 47
+#define DEFAULT_TEMP_THRESHOLD 42
 
 // Connection Limiting
 #define MAX_GLOBAL_CONNECTIONS 8
@@ -32,9 +32,9 @@
 #define DHTTYPE DHT22
 
 // Pin Definitions
-#define RED_LED_PIN 8
-#define GREEN_LED_PIN 7
-#define BUTTON_PIN 13
+#define RED_LED_PIN 46
+#define GREEN_LED_PIN 47
+#define BUTTON_PIN 50
 
 // Timing Constants
 #define BLINK_INTERVAL_NORMAL 500
@@ -56,7 +56,7 @@
 //#define AUTH_SALT "SeegridAgingRoom2026"  // CHANGE THIS to your unique salt
 #define AUTH_SALT "216_Aging_Room"
 //#define AUTH_PASSWORD_SHA256 "8b3d7f4a1c2e9f6b5a8d3c1e4f7a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1d4e7f0a"
-#define AUTH_PASSWORD_SHA256 "8a0648ad941ea0bf552d4d18e6228fb79c7b87830507c1aea708f68a2db8f831"
+#define AUTH_PASSWORD_SHA256 "73c7fb3c9a3521a178e61bba9009b21179e95bf9ab8b3c891fc5036bc9f490c8"
 
 
 // Temperature Threshold
