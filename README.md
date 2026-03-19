@@ -68,14 +68,14 @@ arduino-base64 by Densaugeo
 
 | Component       | Pin | Notes        |
 |-----------------|-----|--------------|
-| DHT22 Sensor A  | 2   | Digital      |
-| DHT22 Sensor B  | 3   | Digital      |
-| DHT22 Sensor C  | 5   | Digital      |
-| DHT22 Sensor D  | 6   | Digital      |
-| Green LED       | 7   | Digital      |
-| Red LED         | 8   | Digital      |
+| DHT22 Sensor A  | 40  | Digital      |
+| DHT22 Sensor B  | 41  | Digital      |
+| DHT22 Sensor C  | 30  | Digital      |
+| DHT22 Sensor D  | 31  | Digital      |
+| Green LED       | 47  | Digital      |
+| Red LED         | 46  | Digital      |
 | Ethernet CS     | 10  | SPI          |
-| Button          | 13  | INPUT_PULLUP |
+| Button          | 50  | INPUT_PULLUP |
 | SD Card CS      | 4   | SPI          |
 | LCD             | I2C | SDA/SCL      |
 
@@ -98,6 +98,7 @@ arduino-base64 by Densaugeo
 | `storage.h`       | SD card and web serving declarations |
 | `storage.cpp`     | CSV logging and HTML generation |
 | `README.md`       | This file |
+| `CHANGELOG.md`    | Version history and change log |
 
 > **Note:** Authentication credentials (`AUTH_SALT` and `AUTH_PASSWORD_SHA256`) are defined in `config.h` and compiled into Flash memory. You must set these before uploading. They cannot be changed at runtime.
 
@@ -118,13 +119,12 @@ Open Arduino IDE, go to **Sketch → Include Library → Manage Libraries**, and
 
 ### Step 3 — Configure the network
 
-Edit `Aging_Room.ino` lines 40–43 if you need to change the static IP fallback used when DHCP is unavailable:
+Edit `Aging_Room.ino` if you need to change the static IP fallback used when DHCP is unavailable:
 
 ```cpp
-IPAddress ip(192, 168, 16, 70);      // Static IP
-IPAddress gateway(192, 168, 16, 1);   // Gateway
-IPAddress subnet(255, 255, 255, 0);   // Subnet mask
-IPAddress dns(192, 168, 16, 1);       // DNS server
+IPAddress ip(192, 168, 48, 20);
+IPAddress gateway(192, 168, 48, 1);
+IPAddress subnet(255, 255, 255, 0);
 ```
 
 ### Step 4 — Set the authentication password
@@ -203,7 +203,7 @@ Step 4: Put in config.h
 ### Password Security Guidelines
 
 **DO:**
-- ✓ Change the default salt `SeegridAgingRoom2026` to something unique per installation
+- ✓ Change the default salt to something unique per installation
 - ✓ Use a strong password (12+ characters, mixed case, numbers, symbols)
 - ✓ Use a different salt for each deployed unit
 - ✓ Store your salt and password in a secure password manager
@@ -239,7 +239,6 @@ Flash stores the compiled program code and all `#define` constants, including yo
 | Property | Value |
 |----------|-------|
 | Size | 256 KB |
-| Current usage | 63,844 bytes (25%) |
 | Survives power loss | **Yes** |
 | Write method | Arduino IDE upload only |
 | Runtime modification | Not possible |
@@ -263,14 +262,15 @@ EEPROM stores only the user-configured temperature threshold (4 bytes). It is no
 // sensors.cpp — Reading threshold on startup
 void initSensors() {
   EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
-  if (tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
+  if (isnan(tempThreshold) || tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
     tempThreshold = DEFAULT_TEMP_THRESHOLD;
+    EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
   }
 }
 
 // sensors.cpp — Saving threshold when user adjusts via button
 void handleButtonPress() {
-  EEPROM.put(0, tempThreshold);
+  EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
 }
 ```
 
@@ -283,7 +283,6 @@ RAM holds all runtime variables (sensor readings, connection state, HTTP buffers
 | Property | Value |
 |----------|-------|
 | Size | 8 KB |
-| Current usage | 3,893 bytes (47%) |
 | Survives power loss | **No** |
 
 ---
@@ -302,12 +301,12 @@ The SD card stores `temp.csv` and `humid.csv`. Data accumulates continuously and
 
 ### Memory Persistence Summary
 
-| Memory Type | Size  | Your Usage    | Survives Power Loss | Credentials Stored |
-|-------------|-------|---------------|---------------------|--------------------|
-| **Flash**   | 256 KB | 63 KB (25%)  | **Yes**             | **Yes ← auth here** |
-| **EEPROM**  | 4 KB  | 4 bytes (0.1%) | **Yes**            | No                 |
-| **RAM**     | 8 KB  | 3.9 KB (47%) | **No**              | No                 |
-| **SD Card** | User  | Growing       | **Yes**             | No                 |
+| Memory Type | Size   | Survives Power Loss | Credentials Stored  |
+|-------------|--------|---------------------|---------------------|
+| **Flash**   | 256 KB | **Yes**             | **Yes ← auth here** |
+| **EEPROM**  | 4 KB   | **Yes**             | No                  |
+| **RAM**     | 8 KB   | **No**              | No                  |
+| **SD Card** | User   | **Yes**             | No                  |
 
 ---
 
@@ -332,14 +331,12 @@ No user action is required after a power outage. Credentials, threshold settings
 
 ### Memory Health Indicators
 
-| Memory | Healthy | Warning | Critical |
-|--------|---------|---------|----------|
-| Flash  | < 80%   | 80–95%  | > 95%    |
-| EEPROM | < 50%   | 50–90%  | > 90%    |
-| RAM    | < 70%   | 70–85%  | > 85%    |
-| SD Card free | > 100 MB | 10–100 MB | < 10 MB |
-
-Your current system is well within healthy ranges on all metrics.
+| Memory       | Healthy   | Warning    | Critical |
+|--------------|-----------|------------|----------|
+| Flash        | < 80%     | 80–95%     | > 95%    |
+| EEPROM       | < 50%     | 50–90%     | > 90%    |
+| RAM          | < 70%     | 70–85%     | > 85%    |
+| SD Card free | > 100 MB  | 10–100 MB  | < 10 MB  |
 
 ---
 
@@ -347,7 +344,7 @@ Your current system is well within healthy ranges on all metrics.
 
 ### Finding the Device IP Address
 
-After boot, the device displays its IP address on the LCD for 10 seconds and on the Serial Monitor (9600 baud). The device attempts DHCP first and falls back to the static IP `192.168.16.70` if DHCP fails.
+After boot, the device displays its IP address on the LCD for 10 seconds and on the Serial Monitor (115200 baud). The device attempts DHCP first and falls back to the static IP `192.168.48.20` if DHCP fails.
 
 ### Accessing the Web Interface
 
@@ -370,36 +367,37 @@ After boot, the device displays its IP address on the LCD for 10 seconds and on 
 
 ## Adjusting the Temperature Threshold
 
-The threshold is adjusted using the physical button on the device. The full process takes approximately 35 seconds.
+The threshold is adjusted using the physical button on the device.
 
 1. Press and hold the button for **5 seconds**.
-2. Both LEDs alternate at 250 ms to confirm you are in adjustment mode.
-3. Continue holding — the threshold increases by 1°C every 2 seconds, cycling between 20°C and 50°C. The current value is shown on the LCD.
-4. Release the button when the desired threshold is displayed.
-5. The green LED flashes 10 times to confirm the save.
-6. Both LEDs flash 20 times as a final confirmation.
-7. The display shows the old and new threshold values for 10 seconds.
+2. Both LEDs alternate at 250 ms to confirm you are entering adjustment mode.
+3. Green LED flashes 10 times to confirm entry.
+4. **Keep holding** — the threshold increases by 1°C every 2 seconds, cycling between 37°C and 47°C. The current value is shown on the LCD.
+5. **Release the button** when the desired threshold is displayed to save.
+6. Red LED flashes 10 times to confirm the save.
+7. Both LEDs flash 20 times as a final confirmation.
+8. The display shows the old and new threshold values for 10 seconds.
 
 The new threshold is saved to EEPROM and persists through power outages.
 
 ### LED Behavior During Adjustment
 
-| Phase | Green LED | Red LED | Duration |
-|-------|-----------|---------|----------|
-| Holding button (0–5 s) | Alternates 250 ms | Alternates 250 ms | 5 seconds |
-| Entry confirmation | Flashes 10× | OFF | ~5 seconds |
-| Adjusting (holding) | Blinks 250 ms | OFF | Until release |
-| Save confirmation | OFF | Flashes 10× | ~5 seconds |
-| Final confirmation | Flashes 20× | Flashes 20× | ~20 seconds |
-| Return to normal | Status dependent | Status dependent | Ongoing |
+| Phase                   | Green LED          | Red LED            | Duration      |
+|-------------------------|--------------------|--------------------|---------------|
+| Holding button (0–5 s)  | Alternates 250 ms  | Alternates 250 ms  | 5 seconds     |
+| Entry confirmation      | Flashes 10×        | OFF                | ~5 seconds    |
+| Adjusting (holding)     | Blinks 250 ms      | OFF                | Until release |
+| Save confirmation       | OFF                | Flashes 10×        | ~5 seconds    |
+| Final confirmation      | Flashes 20×        | Flashes 20×        | ~10 seconds   |
+| Return to normal        | Status dependent   | Status dependent   | Ongoing       |
 
 ### LED Status During Normal Operation
 
-| Pattern | Meaning |
-|---------|---------|
-| Solid green | All sensors within threshold ±3°C |
-| Slow red blink (500 ms) | One or more sensors outside threshold |
-| Fast red blink (250 ms) | Sensor error or read failure |
+| Pattern                  | Meaning                                  |
+|--------------------------|------------------------------------------|
+| Solid green              | All sensors within threshold ±5°C        |
+| Slow red blink (500 ms)  | One or more sensors outside threshold    |
+| Fast red blink (250 ms)  | Sensor error or read failure             |
 
 ---
 
@@ -422,19 +420,13 @@ The server tracks connections by IP address in a 15-slot array and enforces the 
 - **Idle timeout:** Connections inactive for 5 minutes are released automatically
 - **Cleanup interval:** Stale connections are purged every 30 seconds
 
-Connections that exceed either limit receive an HTTP 503 response with a `Retry-After: 60` header. Connection activity is reported on the Serial Monitor:
-
-```
-Connection accepted. IP: 192.168.1.100 | Global: 3/8
-Per-IP limit reached for: 192.168.1.100 (3 connections)
-Connection released. IP: 192.168.1.100 | Global: 2/8
-```
+Connections that exceed either limit receive an HTTP 503 response with a `Retry-After: 60` header.
 
 ---
 
 ### Additional Security Measures
 
-- **Request size limiting** — 512-byte maximum prevents buffer overflow attacks
+- **Request size limiting** — 1024-byte maximum prevents buffer overflow attacks
 - **Request timeout** — 5-second per-request timeout prevents slowloris attacks
 - **HTTP Basic Auth** — Industry-standard authentication protocol
 - **No default credentials** — System requires password setup before first use
@@ -444,7 +436,7 @@ Connection released. IP: 192.168.1.100 | Global: 2/8
 
 ### Security Best Practices for Deployment
 
-1. **Change the default salt** — Never use `SeegridAgingRoom2026` in production.
+1. **Change the default salt** — Never use the example salt in production.
 2. **Use strong passwords** — Minimum 12 characters, mixed case, numbers, and symbols.
 3. **Unique salt per installation** — Each deployed unit should have a different salt.
 4. **Network isolation** — Deploy on an isolated VLAN or private network segment.
@@ -459,7 +451,7 @@ Connection released. IP: 192.168.1.100 | Global: 2/8
 - **Interval:** Every 5 minutes
 - **Files:** `temp.csv` and `humid.csv` on SD card
 - **Format:** Date, Time, Sensor A, Sensor B, Sensor C, Sensor D
-- **Time sync:** NTP updates every 24 hours from `time.nist.gov`
+- **Time sync:** NTP updates every 24 hours
 - **Timezone:** Eastern Time with automatic DST adjustment
 - **Persistence:** All data survives power outages
 
@@ -470,10 +462,10 @@ Connection released. IP: 192.168.1.100 | Global: 2/8
 Edit `config.h` to change these parameters:
 
 ```cpp
-#define MIN_THRESHOLD          20       // Minimum threshold (°C)
-#define MAX_THRESHOLD          50       // Maximum threshold (°C)
-#define DEFAULT_TEMP_THRESHOLD 20       // Default threshold (°C)
-#define THRESHOLD_MARGIN       3.0      // Alert margin (±°C)
+#define MIN_THRESHOLD          37       // Minimum adjustable threshold (°C)
+#define MAX_THRESHOLD          47       // Maximum adjustable threshold (°C)
+#define DEFAULT_TEMP_THRESHOLD 42       // Default threshold (°C)
+#define THRESHOLD_MARGIN       5.0      // Alert margin (±°C)
 #define MAX_GLOBAL_CONNECTIONS 8        // Total connection limit
 #define MAX_PER_IP_CONNECTIONS 3        // Per-IP connection limit
 #define CONNECTION_TIMEOUT     300000   // 5 minutes (ms)
@@ -495,7 +487,7 @@ Edit `config.h` to change these parameters:
 
 ### DHCP failed / cannot reach web interface
 
-- The device falls back to static IP `192.168.16.70` when DHCP fails — try that address first.
+- The device falls back to static IP `192.168.48.20` when DHCP fails — try that address first.
 - Confirm the Ethernet cable is connected and the network has a DHCP server.
 - Verify you are on the same network segment as the device.
 - Confirm your firewall is not blocking port 80.
@@ -504,32 +496,36 @@ Edit `config.h` to change these parameters:
 
 - Check DHT22 sensor wiring and confirm 5 V power is reaching the sensors.
 - Ensure pull-up resistors are present on the data lines (usually built into modules).
-- Verify the correct pins are used (A: 2, B: 3, C: 5, D: 6).
+- Verify the correct pins are used (A: 40, B: 41, C: 30, D: 31).
 
 ### Authentication fails after password setup
 
 - Confirm `AUTH_SALT` in `config.h` exactly matches the salt you used to generate the hash.
 - Verify you uploaded the sketch after saving your changes to `config.h`.
-- Regenerate the hash using `generate_salted_hash.ino` if you are uncertain.
 - Check the Serial Monitor for authentication error messages.
 
 ### Time not syncing / wrong time displayed
 
-- Verify the device has internet access and the NTP server `129.6.15.28` is reachable.
+- Verify the NTP server is reachable from the device network.
 - Check the Serial Monitor for NTP response messages.
 - NTP sync occurs at startup and every 24 hours — wait up to 30 seconds after boot.
 
-### Temperature threshold resets to 20°C after reboot
+### Temperature threshold shows NaN or 0 on boot
 
-This should not happen — the threshold is stored in EEPROM. If it does reset:
-- EEPROM may be corrupted (rare). Re-set the threshold via the button to write a fresh value.
-- Confirm the stored value is within the valid range (20–50°C).
+- This occurs when EEPROM has never been written. The system automatically resets to 42°C and writes a valid value to EEPROM. This will only happen once on a fresh board.
+- If it persists, use the button adjustment sequence to manually set and save a threshold value.
+
+### Temperature threshold resets after reboot
+
+- The threshold is stored in EEPROM and survives power loss. If it resets, EEPROM may be corrupted (rare).
+- Re-set the threshold via the button to write a fresh value.
+- Confirm the stored value is within the valid range (37–47°C).
 
 ### Credentials not working after power outage
 
-Credentials are stored in Flash memory, which survives power loss indefinitely. If login fails after an outage:
+- Credentials are stored in Flash memory, which survives power loss indefinitely.
 - Confirm you originally uploaded the sketch with the correct credentials.
-- Flash corruption is extremely rare. If suspected, re-upload the sketch with your `config.h` values.
+- If suspected corruption, re-upload the sketch with your `config.h` values.
 
 ### CSV data lost after power outage
 
@@ -541,20 +537,7 @@ Credentials are stored in Flash memory, which survives power loss indefinitely. 
 
 ## Version History
 
-- **v1.1 — Security Update (Current)**
-  - Implemented salted SHA256 password hashing
-  - Added rainbow table attack protection
-  - Improved password security documentation
-  - Created `generate_salted_hash.ino` password hash generation tool
-  - Added comprehensive memory architecture documentation
-
-- **v1.0 — Initial Release**
-  - Four-sensor temperature and humidity monitoring
-  - Web dashboard with interactive Chart.js charts
-  - CSV data logging to SD card
-  - NTP time synchronization with DST support
-  - Basic SHA256 authentication
-  - IP-based connection rate limiting
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ---
 

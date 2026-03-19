@@ -22,10 +22,11 @@ void initSensors() {
   dhtB.begin();
   dhtC.begin();
   dhtD.begin();
-  
+
   EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
-  if (tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
+  if (isnan(tempThreshold) || tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
     tempThreshold = DEFAULT_TEMP_THRESHOLD;
+    EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
   }
 
   Serial.print("Loaded threshold from EEPROM: ");
@@ -34,7 +35,7 @@ void initSensors() {
 
 void readSensors() {
   unsigned long now = millis();
-  
+
   if (now - lastSensorRead >= SENSOR_READ_INTERVAL) {
     tA = dhtA.readTemperature();
     if (isnan(tA)) { delay(500); tA = dhtA.readTemperature(); }
@@ -66,7 +67,7 @@ void readSensors() {
 
 void updateLEDs() {
   unsigned long now = millis();
-  
+
   bool tempError = isnan(tA) || isnan(tB) || isnan(tC) || isnan(tD);
   bool tempOutOfRange =
     (!isnan(tA) && abs(tA - tempThreshold) > THRESHOLD_MARGIN) ||
@@ -115,7 +116,7 @@ void handleButtonPress() {
 
     if (millis() - holdStart >= 5000) {
       float oldThreshold = tempThreshold;
-      unsigned long lastIncTime = millis();  // set to now so first increment waits 2 seconds
+      unsigned long lastIncTime = 0;
 
       lcd.clear();
 
@@ -128,26 +129,22 @@ void handleButtonPress() {
         delay(250);
       }
 
-      // Adjustment loop — exits on button press
-      bool adjusting = true;
-      while (adjusting) {
-
-        // Blink green LED
+      // Adjustment loop — keep holding to scroll, release to save
+      while (digitalRead(BUTTON_PIN) == LOW) {
         if (millis() - lastBlinkToggle >= 250) {
           blinkState = !blinkState;
           lastBlinkToggle = millis();
         }
+
         digitalWrite(GREEN_LED_PIN, blinkState ? HIGH : LOW);
         digitalWrite(RED_LED_PIN, LOW);
 
-        // Increment threshold every 2 seconds
         if (millis() - lastIncTime >= 2000) {
           tempThreshold += 1.0;
           if (tempThreshold > MAX_THRESHOLD) tempThreshold = MIN_THRESHOLD;
           lastIncTime = millis();
         }
 
-        // Update LCD
         if (blinkState) {
           lcd.setCursor(0, 0);
           lcd.print("Adjustment Mode   ");
@@ -160,15 +157,9 @@ void handleButtonPress() {
         lcd.setCursor(0, 2);
         lcd.print("New Threshold: ");
         lcd.print((int)tempThreshold);
-        lcd.print("  ");  // clear any trailing digits
+        lcd.print("  ");
         lcd.setCursor(0, 3);
-        lcd.print("Press to save     ");
-
-        // Exit when button pressed
-        if (digitalRead(BUTTON_PIN) == LOW) {
-          delay(50);  // debounce
-          adjusting = false;
-        }
+        lcd.print("Release to save   ");
 
         delay(50);
       }
