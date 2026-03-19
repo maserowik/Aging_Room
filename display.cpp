@@ -2,7 +2,7 @@
 #include "sensors.h"
 
 // Global LCD object
-LiquidCrystal_I2C lcd(0x3F, 20, 4);
+LiquidCrystal_I2C lcd(0x27, 20, 4);
 
 // Display state
 int displayMode = 0;
