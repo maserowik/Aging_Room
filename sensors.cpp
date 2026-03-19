@@ -38,28 +38,28 @@ void readSensors() {
 
   if (now - lastSensorRead >= SENSOR_READ_INTERVAL) {
     tA = dhtA.readTemperature();
-    if (isnan(tA)) { delay(500); tA = dhtA.readTemperature(); }
+    if (isnan(tA)) { delay(100); tA = dhtA.readTemperature(); }
 
     tB = dhtB.readTemperature();
-    if (isnan(tB)) { delay(500); tB = dhtB.readTemperature(); }
+    if (isnan(tB)) { delay(100); tB = dhtB.readTemperature(); }
 
     tC = dhtC.readTemperature();
-    if (isnan(tC)) { delay(500); tC = dhtC.readTemperature(); }
+    if (isnan(tC)) { delay(100); tC = dhtC.readTemperature(); }
 
     tD = dhtD.readTemperature();
-    if (isnan(tD)) { delay(500); tD = dhtD.readTemperature(); }
+    if (isnan(tD)) { delay(100); tD = dhtD.readTemperature(); }
 
     hA = dhtA.readHumidity();
-    if (isnan(hA)) { delay(500); hA = dhtA.readHumidity(); }
+    if (isnan(hA)) { delay(100); hA = dhtA.readHumidity(); }
 
     hB = dhtB.readHumidity();
-    if (isnan(hB)) { delay(500); hB = dhtB.readHumidity(); }
+    if (isnan(hB)) { delay(100); hB = dhtB.readHumidity(); }
 
     hC = dhtC.readHumidity();
-    if (isnan(hC)) { delay(500); hC = dhtC.readHumidity(); }
+    if (isnan(hC)) { delay(100); hC = dhtC.readHumidity(); }
 
     hD = dhtD.readHumidity();
-    if (isnan(hD)) { delay(500); hD = dhtD.readHumidity(); }
+    if (isnan(hD)) { delay(100); hD = dhtD.readHumidity(); }
 
     lastSensorRead = now;
   }
