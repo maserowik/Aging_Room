@@ -22,7 +22,7 @@ void initConnectionTracking() {
 void cleanupStaleConnections() {
   unsigned long now = millis();
   for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
-    if (connectionTrackers[i].activeConnections > 0 && 
+    if (connectionTrackers[i].activeConnections > 0 &&
         (now - connectionTrackers[i].lastConnectionTime > CONNECTION_TIMEOUT)) {
       globalConnectionCount -= connectionTrackers[i].activeConnections;
       connectionTrackers[i].activeConnections = 0;
@@ -40,7 +40,7 @@ bool canAcceptConnection(IPAddress clientIP) {
 
   int trackerIndex = -1;
   int emptySlot = -1;
-  
+
   for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
     if (connectionTrackers[i].ip == clientIP && connectionTrackers[i].activeConnections > 0) {
       trackerIndex = i;
@@ -72,14 +72,14 @@ bool canAcceptConnection(IPAddress clientIP) {
   }
 
   globalConnectionCount++;
-  
+
   Serial.print("Connection accepted. IP: ");
   Serial.print(clientIP);
   Serial.print(" | Global: ");
   Serial.print(globalConnectionCount);
   Serial.print("/");
   Serial.println(MAX_GLOBAL_CONNECTIONS);
-  
+
   return true;
 }
 
@@ -88,15 +88,15 @@ void releaseConnection(IPAddress clientIP) {
     if (connectionTrackers[i].ip == clientIP && connectionTrackers[i].activeConnections > 0) {
       connectionTrackers[i].activeConnections--;
       connectionTrackers[i].lastConnectionTime = millis();
-      
+
       if (connectionTrackers[i].activeConnections == 0) {
         connectionTrackers[i].ip = IPAddress(0, 0, 0, 0);
       }
-      
+
       if (globalConnectionCount > 0) {
         globalConnectionCount--;
       }
-      
+
       Serial.print("Connection released. IP: ");
       Serial.print(clientIP);
       Serial.print(" | Global: ");
@@ -139,18 +139,19 @@ bool isLeapYear(int year) {
   return (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
 }
 
-void epochToDateTime(unsigned long epoch, int &year, int &month, int &day, int &hour, int &minute, int &second, int &weekday) {
+void epochToDateTime(unsigned long epoch, int &year, int &month, int &day,
+                     int &hour, int &minute, int &second, int &weekday) {
   unsigned long days = epoch / 86400UL;
   unsigned long secondsInDay = epoch % 86400UL;
 
-  hour = secondsInDay / 3600;
+  hour   = secondsInDay / 3600;
   minute = (secondsInDay % 3600) / 60;
   second = secondsInDay % 60;
 
   year = 1970;
   while (true) {
     int daysInYear = isLeapYear(year) ? 366 : 365;
-    if (days >= daysInYear) {
+    if (days >= (unsigned long)daysInYear) {
       days -= daysInYear;
       year++;
     } else {
@@ -162,37 +163,61 @@ void epochToDateTime(unsigned long epoch, int &year, int &month, int &day, int &
   if (isLeapYear(year)) daysInMonth[1] = 29;
 
   month = 0;
-  while (days >= daysInMonth[month]) {
+  while (days >= (unsigned long)daysInMonth[month]) {
     days -= daysInMonth[month];
     month++;
   }
   day = days + 1;
 
+  // weekday: 0=Sunday, 1=Monday, ..., 6=Saturday
+  // January 1 1970 was a Thursday = 4
   unsigned long daysSince1970 = epoch / 86400UL;
   weekday = (daysSince1970 + 4) % 7;
 }
 
-bool isDST(int year, int month, int day, int weekday) {
-  if (month < 3 || month > 11) return false;
-  if (month > 3 && month < 11) return true;
+// Returns the day-of-month of the Nth occurrence of targetWeekday
+// (0=Sun..6=Sat) in the given month/year
+// Uses Tomohiko Sakamoto's algorithm to find weekday of the 1st of the month
+int nthWeekdayOfMonth(int year, int month, int targetWeekday, int n) {
+  static int t[] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
+  int y = year;
+  if (month < 3) y--;
+  int wdayOf1st = (y + y/4 - y/100 + y/400 + t[month-1] + 1) % 7;
+
+  // Days from 1st until first occurrence of targetWeekday
+  int daysUntil = (targetWeekday - wdayOf1st + 7) % 7;
+  // Day of month of first occurrence
+  int firstOccurrence = 1 + daysUntil;
+  // Day of month of nth occurrence
+  return firstOccurrence + (n - 1) * 7;
+}
+
+bool isDST(int year, int month, int day, int hour) {
+  // US DST rules (Eastern Time):
+  // Starts: 2nd Sunday of March at 2:00 AM
+  // Ends:   1st Sunday of November at 2:00 AM
+
+  if (month < 3 || month > 11) return false;  // Jan, Feb, Dec — always EST
+  if (month > 3 && month < 11) return true;   // Apr through Oct — always EDT
+
   if (month == 3) {
-    int wMarch1 = (weekday - (day - 1)) % 7;
-    if (wMarch1 < 0) wMarch1 += 7;
-    int secondSunday = 8 + ((7 - wMarch1) % 7);
-    return day >= secondSunday;
+    int dstStart = nthWeekdayOfMonth(year, 3, 0, 2);  // 2nd Sunday of March
+    if (day > dstStart) return true;
+    if (day < dstStart) return false;
+    return hour >= 2;  // On transition day, EDT starts at 2:00 AM
   }
+
   if (month == 11) {
-    int daysToNov1 = day - 1;
-    int wNov1 = (weekday - daysToNov1) % 7;
-    if (wNov1 < 0) wNov1 += 7;
-    int firstSunday = 1 + ((7 - wNov1) % 7);
-    return day < firstSunday;
+    int dstEnd = nthWeekdayOfMonth(year, 11, 0, 1);   // 1st Sunday of November
+    if (day < dstEnd) return true;
+    if (day > dstEnd) return false;
+    return hour < 2;   // On transition day, EST resumes at 2:00 AM
   }
+
   return false;
 }
 
 void requestNtpTime() {
-  // IPAddress ntpIP(129, 6, 15, 28);
   IPAddress ntpIP(192, 168, 80, 8);
   Serial.println("Sending NTP request...");
   sendNTPpacket(ntpIP);
@@ -204,37 +229,38 @@ void requestNtpTime() {
       Serial.println("NTP response received!");
       Udp.read(packetBuffer, NTP_PACKET_SIZE);
       unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-      unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-      unsigned long epoch = (highWord << 16) | lowWord;
+      unsigned long lowWord  = word(packetBuffer[42], packetBuffer[43]);
+      unsigned long epoch    = (highWord << 16) | lowWord;
+      epoch -= 2208988800UL;  // Convert NTP epoch to Unix epoch
 
-      unsigned long deviceEpoch = currentEpoch;
-      long offset = (long)epoch - (long)deviceEpoch;
-
-      Serial.print("NTP Offset (seconds): ");
-      Serial.println(offset);
-
-      epoch -= 2208988800UL;
-
+      // Parse UTC time first to determine DST correctly
       int year, month, day, hour, minute, second, weekday;
       epochToDateTime(epoch, year, month, day, hour, minute, second, weekday);
-      bool dstActive = isDST(year, month, day, weekday);
+
+      bool dstActive = isDST(year, month, day, hour);
       int timeZoneOffset = dstActive ? -4 : -5;
       currentEpoch = epoch + (timeZoneOffset * 3600UL);
+
+      // Re-parse local time for Serial Monitor display
+      int lyear, lmonth, lday, lhour, lminute, lsecond, lweekday;
+      epochToDateTime(currentEpoch, lyear, lmonth, lday, lhour, lminute, lsecond, lweekday);
 
       Serial.print("DST Active: ");
       Serial.println(dstActive ? "Yes (EDT)" : "No (EST)");
       Serial.print("Local Date & Time: ");
-      Serial.print(month + 1);
+      Serial.print(lmonth + 1);
       Serial.print("-");
-      Serial.print(day);
+      Serial.print(lday);
       Serial.print("-");
-      Serial.print(year);
+      Serial.print(lyear);
       Serial.print(" ");
-      Serial.print(hour);
+      Serial.print(lhour);
       Serial.print(":");
-      Serial.print(minute);
+      if (lminute < 10) Serial.print("0");
+      Serial.print(lminute);
       Serial.print(":");
-      Serial.println(second);
+      if (lsecond < 10) Serial.print("0");
+      Serial.println(lsecond);
       return;
     }
   }

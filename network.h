@@ -32,7 +32,8 @@ void sendNTPpacket(IPAddress &address);
 void requestNtpTime();
 bool isLeapYear(int year);
 void epochToDateTime(unsigned long epoch, int &year, int &month, int &day, int &hour, int &minute, int &second, int &weekday);
-bool isDST(int year, int month, int day, int weekday);
+int nthWeekdayOfMonth(int year, int month, int targetWeekday, int n);
+bool isDST(int year, int month, int day, int hour);
 String getDateString();
 String getTimeString();
 
