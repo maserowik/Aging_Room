@@ -480,20 +480,6 @@ Edit `config.h` to change these parameters:
 
 ## Troubleshooting
 
-### SD card initialization failed
-
-- Confirm the SD card is formatted as FAT32.
-- Check the SD card module wiring (CS pin 4).
-- Verify the card is properly seated.
-- Try a different SD card.
-
-### DHCP failed / cannot reach web interface
-
-- The device falls back to static IP `192.168.48.20` when DHCP fails — try that address first.
-- Confirm the Ethernet cable is connected and the network has a DHCP server.
-- Verify you are on the same network segment as the device.
-- Confirm your firewall is not blocking port 80.
-
 ### Sensor reading errors / LCD shows "ERR"
 
 - Check DHT22 sensor wiring and confirm 5V power is reaching the sensors.
@@ -501,6 +487,24 @@ Edit `config.h` to change these parameters:
 - Confirm GND is connected for all sensors.
 - For M12 wiring: Pin 2 = Sensor A or C data, Pin 4 = Sensor B or D data, Pin 1 = VCC, Pin 3 = GND.
 - If using bare DHT22 sensors (not modules), ensure a 4.7kΩ–10kΩ pull-up resistor is present on each data line.
+
+### Temperature threshold shows NaN or 0 on boot
+
+- This occurs when EEPROM has never been written. The system automatically resets to 42°C and writes a valid value to EEPROM. This will only happen once on a fresh board.
+- If it persists, use the button adjustment sequence to manually set and save a threshold value.
+
+### Temperature threshold resets after reboot
+
+- The threshold is stored in EEPROM and survives power loss. If it resets, EEPROM may be corrupted (rare).
+- Re-set the threshold via the button to write a fresh value.
+- Confirm the stored value is within the valid range (37–47°C).
+
+### DHCP failed / cannot reach web interface
+
+- The device falls back to static IP `192.168.48.20` when DHCP fails — try that address first.
+- Confirm the Ethernet cable is connected and the network has a DHCP server.
+- Verify you are on the same network segment as the device.
+- Confirm your firewall is not blocking port 80.
 
 ### Authentication fails after password setup
 
@@ -520,28 +524,24 @@ Edit `config.h` to change these parameters:
 - This indicates a DST detection failure. Confirm you are running v1.5 or later which includes the corrected DST calculation.
 - Check the Serial Monitor output — it will show which timezone was detected at boot.
 
-### Temperature threshold shows NaN or 0 on boot
+### SD card initialization failed
 
-- This occurs when EEPROM has never been written. The system automatically resets to 42°C and writes a valid value to EEPROM. This will only happen once on a fresh board.
-- If it persists, use the button adjustment sequence to manually set and save a threshold value.
-
-### Temperature threshold resets after reboot
-
-- The threshold is stored in EEPROM and survives power loss. If it resets, EEPROM may be corrupted (rare).
-- Re-set the threshold via the button to write a fresh value.
-- Confirm the stored value is within the valid range (37–47°C).
-
-### Credentials not working after power outage
-
-- Credentials are stored in Flash memory, which survives power loss indefinitely.
-- Confirm you originally uploaded the sketch with the correct credentials.
-- If suspected corruption, re-upload the sketch with your `config.h` values.
+- Confirm the SD card is formatted as FAT32.
+- Check the SD card module wiring (CS pin 4).
+- Verify the card is properly seated.
+- Try a different SD card.
 
 ### CSV data lost after power outage
 
 - Check that the SD card is properly inserted.
 - Verify the card is formatted as FAT32.
 - The last data point written before the outage may be incomplete — all prior records are intact.
+
+### Credentials not working after power outage
+
+- Credentials are stored in Flash memory, which survives power loss indefinitely.
+- Confirm you originally uploaded the sketch with the correct credentials.
+- If suspected corruption, re-upload the sketch with your `config.h` values.
 
 ---
 
