@@ -29,8 +29,8 @@ Once running, the system enters a continuous monitoring loop that:
 - **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates through sensor zones automatically.
 - **Controls the LED indicators** based on sensor status — solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
 - **Logs sensor data to SD card** every 5 minutes, writing timestamped rows to `temp.csv` and `humid.csv`. Data survives power outages and can be downloaded directly from the web interface.
-- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
-- **Syncs time via NTP** at startup and every 24 hours thereafter, with automatic DST adjustment for Eastern Time. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
+- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing. The dashboard polls the device every 30 seconds for threshold changes and updates the chart lines instantly without a full page reload.
+- **Syncs time via NTP** at startup and every 24 hours thereafter. The system first contacts the internal NTP server `192.168.80.8` and falls back to the public NTP pool `pool.ntp.org` if the internal server is unreachable. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
 - **Tracks network connections** per IP address to prevent resource exhaustion. A maximum of 8 simultaneous global connections and 3 per IP are enforced; connections idle for 5 minutes are released automatically.
 - **Persists the temperature threshold** to EEPROM so the user-configured value survives power outages. Authentication credentials are stored in Flash memory and are never modified at runtime.
 
@@ -320,7 +320,7 @@ The SD card stores `temp.csv` and `humid.csv`. Data accumulates continuously and
 [5s]    Sensors initialize
 [10s]   Network attempts DHCP
 [15s]   Device IP address displayed on LCD
-[20s]   NTP time sync begins
+[20s]   NTP time sync begins (primary then fallback)
 [25s]   System fully operational
 [30s]   First sensor reading logged to SD card
 ```
@@ -362,6 +362,7 @@ After boot, the device displays its IP address on the LCD for 10 seconds and on 
 - **Download CSV** — Get raw `temp.csv` or `humid.csv` files
 - **Delete CSV** — Clear historical data (requires confirmation)
 - **Auto-refresh** — Charts update every 5 minutes automatically
+- **Live threshold lines** — Chart threshold lines update within 30 seconds of any button adjustment, no page reload required
 
 ---
 
@@ -377,6 +378,7 @@ The threshold is adjusted using the physical button on the device.
 6. Red LED flashes 10 times to confirm the save.
 7. Both LEDs flash 20 times as a final confirmation.
 8. The display shows the old and new threshold values for 10 seconds.
+9. The web dashboard threshold lines update automatically within 30 seconds.
 
 The new threshold is saved to EEPROM and persists through power outages.
 
@@ -407,7 +409,7 @@ The new threshold is saved to EEPROM and persists through power outages.
 
 Passwords are never stored in plaintext. The system stores only `SHA256(SALT + PASSWORD)` in Flash. Because the salt is unique per installation, pre-computed hash databases (rainbow tables) are useless even if someone extracts the Flash contents.
 
-All web endpoints require authentication: the root dashboard (`/`), temperature CSV download (`/temp.csv`), humidity CSV download (`/humid.csv`), and file deletion (`/delete_temp`, `/delete_humid`).
+All web endpoints require authentication: the root dashboard (`/`), temperature CSV download (`/temp.csv`), humidity CSV download (`/humid.csv`), file deletion (`/delete_temp`, `/delete_humid`), and the threshold endpoint (`/threshold`).
 
 ---
 
@@ -451,7 +453,7 @@ Connections that exceed either limit receive an HTTP 503 response with a `Retry-
 - **Interval:** Every 5 minutes
 - **Files:** `temp.csv` and `humid.csv` on SD card
 - **Format:** Date, Time, Sensor A, Sensor B, Sensor C, Sensor D
-- **Time sync:** NTP updates every 24 hours
+- **Time sync:** NTP updates every 24 hours — primary server `192.168.80.8`, fallback `pool.ntp.org`
 - **Timezone:** Eastern Time with automatic DST adjustment
 - **DST Start:** 2nd Sunday of March at 2:00 AM (EDT, UTC-4)
 - **DST End:** 1st Sunday of November at 2:00 AM (EST, UTC-5)
@@ -514,22 +516,22 @@ Edit `config.h` to change these parameters:
 
 ### Time not syncing / wrong time displayed
 
-- Verify the NTP server is reachable from the device network.
-- Check the Serial Monitor for NTP response messages.
-- NTP sync occurs at startup and every 24 hours — wait up to 30 seconds after boot.
-- Serial Monitor will show `DST Active: Yes (EDT)` or `DST Active: No (EST)` confirming correct timezone detection.
+- The system tries the internal NTP server `192.168.80.8` first, then falls back to `pool.ntp.org`.
+- Check the Serial Monitor — it will show which server responded or report timeout on both.
+- If both servers time out, the device will continue running but timestamps will be incorrect until the next NTP retry 24 hours later.
+- Verify the device has network access and that port 123 (UDP) is not blocked by a firewall.
 
 ### Time is off by one hour
 
 - This indicates a DST detection failure. Confirm you are running v1.5 or later which includes the corrected DST calculation.
-- Check the Serial Monitor output — it will show which timezone was detected at boot.
+- Check the Serial Monitor output — it will show `DST Active: Yes (EDT)` or `DST Active: No (EST)`.
 
 ### SD card initialization failed
 
 - Confirm the SD card is formatted as FAT32.
 - Check the SD card module wiring (CS pin 4).
 - Verify the card is properly seated.
-- Try a different SD card.
+- Try a different SD card. Cards larger than 32GB may need to be reformatted as FAT32 — Windows defaults these to exFAT which is not compatible.
 
 ### CSV data lost after power outage
 

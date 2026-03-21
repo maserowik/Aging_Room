@@ -128,6 +128,15 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
   }
 }
 
+void serveThreshold(EthernetClient &client) {
+  extern float tempThreshold;
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: text/plain");
+  client.println("Connection: close");
+  client.println();
+  client.println(tempThreshold, 1);
+}
+
 void serveRootPage(EthernetClient &client) {
   String lastUpdate = getDateString() + " " + getTimeString();
 
@@ -181,6 +190,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<script>"));
   client.println(F("let tempChart, humidChart;"));
 
+  client.print(F("let threshold = "));
+  client.print(tempThreshold, 1);
+  client.println(F(";"));
+  client.println(F("const margin = 5.0;"));
+
   client.println(F("function showTab(id, evt){"));
   client.println(F("  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));"));
   client.println(F("  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));"));
@@ -224,10 +238,27 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD};"));
   client.println(F("}"));
 
-  client.print(F("const threshold = "));
-  client.print(tempThreshold, 1);
-  client.println(F(";"));
-  client.println(F("const margin = 3.0;"));
+  // Poll /threshold every 30 seconds and update chart lines if value changed
+  client.println(F("async function pollThreshold() {"));
+  client.println(F("  try {"));
+  client.println(F("    let res = await fetch('/threshold');"));
+  client.println(F("    let val = parseFloat(await res.text());"));
+  client.println(F("    if (!isNaN(val) && val !== threshold) {"));
+  client.println(F("      threshold = val;"));
+  client.println(F("      updateThresholdLines();"));
+  client.println(F("    }"));
+  client.println(F("  } catch(e) {}"));
+  client.println(F("}"));
+
+  client.println(F("function updateThresholdLines() {"));
+  client.println(F("  if (tempChart) {"));
+  client.println(F("    let len = tempChart.data.labels.length;"));
+  client.println(F("    tempChart.data.datasets[4].data = Array(len).fill(threshold);"));
+  client.println(F("    tempChart.data.datasets[5].data = Array(len).fill(threshold + margin);"));
+  client.println(F("    tempChart.data.datasets[6].data = Array(len).fill(threshold - margin);"));
+  client.println(F("    tempChart.update();"));
+  client.println(F("  }"));
+  client.println(F("}"));
 
   client.println(F("async function updateCharts(){"));
   client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value);"));
@@ -281,6 +312,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("document.getElementById('tempRange').addEventListener('change', updateCharts);"));
   client.println(F("document.getElementById('humidRange').addEventListener('change', updateCharts);"));
   client.println(F("setInterval(updateCharts, 300000);"));
+  client.println(F("setInterval(pollThreshold, 30000);"));
   client.println(F("updateCharts();"));
 
   client.println(F("function updateLastUpdate() {"));

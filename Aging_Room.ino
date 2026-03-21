@@ -123,7 +123,19 @@ void loop() {
         }
 
         if (c == '\n' && currentLineIsBlank) {
-          if (httpRequest.startsWith("GET /temp.csv")) {
+          if (httpRequest.startsWith("GET /threshold")) {
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              serveThreshold(client);
+            }
+            break;
+          } else if (httpRequest.startsWith("GET /temp.csv")) {
             if (!checkAuth(httpRequest)) {
               client.println("HTTP/1.1 401 Unauthorized");
               client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");

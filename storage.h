@@ -13,6 +13,7 @@ void initSDCard();
 void createCsvHeaderIfNeeded();
 void appendCsvData();
 void serveFile(EthernetClient &client, const char *filename, const char *contentType);
+void serveThreshold(EthernetClient &client);
 void serveRootPage(EthernetClient &client);
 
 #endif // STORAGE_H

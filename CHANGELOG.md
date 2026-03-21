@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.7] — 2026-03-21
+
+### Added
+- `/threshold` endpoint in web server returns current threshold value as plain text
+- JavaScript `pollThreshold()` function polls `/threshold` every 30 seconds
+- Chart threshold lines update automatically without a full page reload when threshold changes via button
+- `serveThreshold()` function added to `storage.cpp` and `storage.h`
+- `/threshold` endpoint added to request handler in `Aging_Room.ino`
+
+### Fixed
+- Web dashboard chart margin corrected from hardcoded `3.0` to `5.0` to match `THRESHOLD_MARGIN` in `config.h`
+- `threshold` JavaScript variable changed from `const` to `let` to allow live updates
+
+---
+
+## [v1.6] — 2026-03-21
+
+### Added
+- NTP fallback to public pool (`pool.ntp.org` / 216.239.35.0) if internal NTP server `192.168.80.8` times out
+- New `tryNtpSync()` helper function handles a single NTP server attempt and returns true/false
+- `requestNtpTime()` now tries primary server first, then fallback, logging which server responded
+- Serial Monitor reports timeout per server and final failure if both servers are unreachable
+
+---
+
 ## [v1.5] — 2026-03-20
 
 ### Fixed
