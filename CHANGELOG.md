@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.5] — 2026-03-20
+
+### Fixed
+- DST detection broken — system was reporting EST instead of EDT on March 20 2026
+- Replaced unreliable `isDST()` back-calculation logic with `nthWeekdayOfMonth()` helper using Tomohiko Sakamoto's algorithm to correctly find the 2nd Sunday of March and 1st Sunday of November
+- DST check now uses UTC hour before applying timezone offset, preventing off-by-one errors on transition days
+- `isDST()` signature updated to accept `hour` parameter instead of `weekday` for correct 2:00 AM transition handling
+- Local time re-parsed after offset applied so Serial Monitor displays correct local time
+
+### Changed
+- `network.h` updated to reflect new `isDST(int year, int month, int day, int hour)` signature
+- `nthWeekdayOfMonth()` prototype added to `network.h`
+
+---
+
+## [v1.4] — 2026-03-19
+
+### Fixed
+- Sensor retry delays reduced from 500ms to 100ms in `readSensors()` to prevent fast red blink appearing slow when no sensors are attached
+
+---
+
 ## [v1.3] — 2026-03-19
 
 ### Fixed

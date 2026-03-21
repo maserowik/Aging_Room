@@ -30,7 +30,7 @@ Once running, the system enters a continuous monitoring loop that:
 - **Controls the LED indicators** based on sensor status — solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
 - **Logs sensor data to SD card** every 5 minutes, writing timestamped rows to `temp.csv` and `humid.csv`. Data survives power outages and can be downloaded directly from the web interface.
 - **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
-- **Syncs time via NTP** from `time.nist.gov` at startup and every 24 hours thereafter, with automatic DST adjustment for Eastern Time.
+- **Syncs time via NTP** at startup and every 24 hours thereafter, with automatic DST adjustment for Eastern Time. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
 - **Tracks network connections** per IP address to prevent resource exhaustion. A maximum of 8 simultaneous global connections and 3 per IP are enforced; connections idle for 5 minutes are released automatically.
 - **Persists the temperature threshold** to EEPROM so the user-configured value survives power outages. Authentication credentials are stored in Flash memory and are never modified at runtime.
 
@@ -43,7 +43,7 @@ Once running, the system enters a continuous monitoring loop that:
 - Arduino Mega 2560 (or compatible)
 - Ethernet Shield W5100 or W5500
 - 4× DHT22 temperature/humidity sensors
-- 20×4 I2C LCD display (I2C address `0x3F`)
+- 20×4 I2C LCD display (I2C address `0x27`)
 - SD card module
 - Red and green LEDs
 - Push button
@@ -90,7 +90,7 @@ arduino-base64 by Densaugeo
 | `auth.h`          | Authentication function declarations |
 | `auth.cpp`        | Salted SHA256 password validation logic |
 | `network.h`       | Network and NTP declarations |
-| `network.cpp`     | Connection tracking, NTP, and time functions |
+| `network.cpp`     | Connection tracking, NTP, DST, and time functions |
 | `sensors.h`       | Sensor and LED declarations |
 | `sensors.cpp`     | DHT22 reading, LED control, and button handling |
 | `display.h`       | LCD display declarations |
@@ -453,6 +453,8 @@ Connections that exceed either limit receive an HTTP 503 response with a `Retry-
 - **Format:** Date, Time, Sensor A, Sensor B, Sensor C, Sensor D
 - **Time sync:** NTP updates every 24 hours
 - **Timezone:** Eastern Time with automatic DST adjustment
+- **DST Start:** 2nd Sunday of March at 2:00 AM (EDT, UTC-4)
+- **DST End:** 1st Sunday of November at 2:00 AM (EST, UTC-5)
 - **Persistence:** All data survives power outages
 
 ---
@@ -494,9 +496,11 @@ Edit `config.h` to change these parameters:
 
 ### Sensor reading errors / LCD shows "ERR"
 
-- Check DHT22 sensor wiring and confirm 5 V power is reaching the sensors.
-- Ensure pull-up resistors are present on the data lines (usually built into modules).
-- Verify the correct pins are used (A: 40, B: 41, C: 30, D: 31).
+- Check DHT22 sensor wiring and confirm 5V power is reaching the sensors.
+- Verify the data wire from each M12 connector is landed on the correct Arduino pin (A:40, B:41, C:30, D:31).
+- Confirm GND is connected for all sensors.
+- For M12 wiring: Pin 2 = Sensor A or C data, Pin 4 = Sensor B or D data, Pin 1 = VCC, Pin 3 = GND.
+- If using bare DHT22 sensors (not modules), ensure a 4.7kΩ–10kΩ pull-up resistor is present on each data line.
 
 ### Authentication fails after password setup
 
@@ -509,6 +513,12 @@ Edit `config.h` to change these parameters:
 - Verify the NTP server is reachable from the device network.
 - Check the Serial Monitor for NTP response messages.
 - NTP sync occurs at startup and every 24 hours — wait up to 30 seconds after boot.
+- Serial Monitor will show `DST Active: Yes (EDT)` or `DST Active: No (EST)` confirming correct timezone detection.
+
+### Time is off by one hour
+
+- This indicates a DST detection failure. Confirm you are running v1.5 or later which includes the corrected DST calculation.
+- Check the Serial Monitor output — it will show which timezone was detected at boot.
 
 ### Temperature threshold shows NaN or 0 on boot
 
