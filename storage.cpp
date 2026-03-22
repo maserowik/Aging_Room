@@ -222,7 +222,8 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  let lines = text.trim().split('\\n').slice(1);"));
   client.println(F("  let limit = new Date().getTime() - rangeDays * 86400000;"));
   client.println(F("  let labels=[], sensorsA=[], sensorsB=[], sensorsC=[], sensorsD=[];"));
-  client.println(F("  let downsampleRate = 12;"));
+  // Dynamic downsample rate based on selected range
+  client.println(F("  let downsampleRate = rangeDays <= 1 ? 1 : rangeDays <= 3 ? 6 : 12;"));
   client.println(F("  lines.forEach((line, idx) => {"));
   client.println(F("    if (idx % downsampleRate !== 0) return;"));
   client.println(F("    let [date, time, a, b, c, d] = line.split(',');"));

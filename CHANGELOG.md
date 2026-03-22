@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.8] — 2026-03-21
+
+### Fixed
+- Chart downsampling was hardcoded to every 12th row (1 point per hour) regardless of selected time range
+- Downsampling now scales dynamically with the selected range:
+  - 1 day view — every reading plotted (every 5 minutes)
+  - 3 day view — every 6th reading (every 30 minutes)
+  - 5 or 7 day view — every 12th reading (every 60 minutes)
+
+---
+
 ## [v1.7] — 2026-03-21
 
 ### Added

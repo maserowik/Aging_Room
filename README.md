@@ -29,7 +29,7 @@ Once running, the system enters a continuous monitoring loop that:
 - **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates through sensor zones automatically.
 - **Controls the LED indicators** based on sensor status — solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
 - **Logs sensor data to SD card** every 5 minutes, writing timestamped rows to `temp.csv` and `humid.csv`. Data survives power outages and can be downloaded directly from the web interface.
-- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing. The dashboard polls the device every 30 seconds for threshold changes and updates the chart lines instantly without a full page reload.
+- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. The chart resolution scales automatically with the selected time range — every 5 minutes for 1 day, every 30 minutes for 3 days, and every 60 minutes for 5 or 7 days. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing. The dashboard polls the device every 30 seconds for threshold changes and updates the chart lines instantly without a full page reload.
 - **Syncs time via NTP** at startup and every 24 hours thereafter. The system first contacts the internal NTP server `192.168.80.8` and falls back to the public NTP pool `pool.ntp.org` if the internal server is unreachable. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
 - **Tracks network connections** per IP address to prevent resource exhaustion. A maximum of 8 simultaneous global connections and 3 per IP are enforced; connections idle for 5 minutes are released automatically.
 - **Persists the temperature threshold** to EEPROM so the user-configured value survives power outages. Authentication credentials are stored in Flash memory and are never modified at runtime.
@@ -363,6 +363,15 @@ After boot, the device displays its IP address on the LCD for 10 seconds and on 
 - **Delete CSV** — Clear historical data (requires confirmation)
 - **Auto-refresh** — Charts update every 5 minutes automatically
 - **Live threshold lines** — Chart threshold lines update within 30 seconds of any button adjustment, no page reload required
+
+### Chart Resolution by Time Range
+
+| Range   | Data Points Plotted | Resolution     |
+|---------|---------------------|----------------|
+| 1 day   | Every reading       | Every 5 min    |
+| 3 days  | Every 6th reading   | Every 30 min   |
+| 5 days  | Every 12th reading  | Every 60 min   |
+| 7 days  | Every 12th reading  | Every 60 min   |
 
 ---
 
