@@ -58,13 +58,13 @@ void bootSequence() {
   lcd.print("System Getting Ready");
   lcd.setCursor(0, 2);
   lcd.print("Standby");
-  delay(10000);
+  delay(3000);  // Reduced from 10000ms to 3000ms
   lcd.clear();
 }
 
 void updateDisplay() {
   unsigned long now = millis();
-  
+
   if (now - lastDisplaySwitch >= 10000) {
     displayMode = !displayMode;
     lcd.clear();

@@ -43,10 +43,28 @@ void setup() {
   Serial.println(Ethernet.localIP());
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Ethernet IP: ");
-  lcd.setCursor(0, 2);
+  lcd.print("Ethernet IP:");
+  lcd.setCursor(0, 1);
   lcd.print(Ethernet.localIP());
-  delay(10000);
+  lcd.setCursor(0, 2);
+  lcd.print("DNS Name:");
+
+  // Scroll hostname across line 3 for 10 seconds
+  const char* hostname = "agingroom00.mach.hq.seegrid.lan";
+  String scrollText = String(hostname) + "    ";  // trailing spaces to clear edge
+  int scrollLen = scrollText.length();
+  unsigned long scrollStart = millis();
+  int scrollPos = 0;
+  while (millis() - scrollStart < 10000) {
+    lcd.setCursor(0, 3);
+    String display = "";
+    for (int i = 0; i < 20; i++) {
+      display += scrollText[(scrollPos + i) % scrollLen];
+    }
+    lcd.print(display);
+    delay(300);
+    scrollPos = (scrollPos + 1) % scrollLen;
+  }
   lcd.clear();
 
   Udp.begin(UDP_LOCAL_PORT);
@@ -133,6 +151,30 @@ void loop() {
               client.println("Authentication required.");
             } else {
               serveThreshold(client);
+            }
+            break;
+          } else if (httpRequest.startsWith("GET /status")) {
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              serveStatus(client);
+            }
+            break;
+          } else if (httpRequest.startsWith("GET /sysinfo")) {
+            if (!checkAuth(httpRequest)) {
+              client.println("HTTP/1.1 401 Unauthorized");
+              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println("Authentication required.");
+            } else {
+              serveSystemInfo(client);
             }
             break;
           } else if (httpRequest.startsWith("GET /temp.csv")) {

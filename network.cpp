@@ -7,6 +7,7 @@ EthernetServer server(SERVER_PORT);
 byte packetBuffer[NTP_PACKET_SIZE];
 unsigned long currentEpoch = 0;
 unsigned long lastNtpCheck = 0;
+unsigned long lastNtpEpoch = 0;  // Local epoch at time of last successful NTP sync
 ConnectionTracker connectionTrackers[CONNECTION_TRACKING_SIZE];
 uint8_t globalConnectionCount = 0;
 
@@ -217,13 +218,18 @@ bool isDST(int year, int month, int day, int hour) {
   return false;
 }
 
-void requestNtpTime() {
-  IPAddress ntpIP(192, 168, 80, 8);
-  Serial.println("Sending NTP request...");
+// Attempt NTP sync from a single server, return true if successful
+bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
+  Serial.print("Sending NTP request to ");
+  Serial.print(serverName);
+  Serial.print(" (");
+  Serial.print(ntpIP);
+  Serial.println(")...");
+
   sendNTPpacket(ntpIP);
 
   unsigned long start = millis();
-  while (millis() - start < 2000) {
+  while (millis() - start < 3000) {
     int size = Udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
       Serial.println("NTP response received!");
@@ -237,9 +243,11 @@ void requestNtpTime() {
       int year, month, day, hour, minute, second, weekday;
       epochToDateTime(epoch, year, month, day, hour, minute, second, weekday);
 
-      bool dstActive = isDST(year, month, day, hour);
+      // v1.10 fix: epochToDateTime returns 0-indexed month, isDST expects 1-indexed
+      bool dstActive = isDST(year, month + 1, day, hour);
       int timeZoneOffset = dstActive ? -4 : -5;
       currentEpoch = epoch + (timeZoneOffset * 3600UL);
+      lastNtpEpoch = currentEpoch;  // Record time of successful sync
 
       // Re-parse local time for Serial Monitor display
       int lyear, lmonth, lday, lhour, lminute, lsecond, lweekday;
@@ -261,10 +269,25 @@ void requestNtpTime() {
       Serial.print(":");
       if (lsecond < 10) Serial.print("0");
       Serial.println(lsecond);
-      return;
+      return true;
     }
   }
-  Serial.println("NTP response timeout.");
+
+  Serial.print("NTP timeout from ");
+  Serial.println(serverName);
+  return false;
+}
+
+void requestNtpTime() {
+  // Primary: internal NTP server
+  IPAddress primaryNTP(192, 168, 80, 8);
+  if (tryNtpSync(primaryNTP, "192.168.80.8")) return;
+
+  // Fallback: public NTP pool
+  IPAddress fallbackNTP(216, 239, 35, 0);
+  if (tryNtpSync(fallbackNTP, "pool.ntp.org")) return;
+
+  Serial.println("NTP sync failed on all servers.");
 }
 
 String getDateString() {

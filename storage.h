@@ -14,6 +14,8 @@ void createCsvHeaderIfNeeded();
 void appendCsvData();
 void serveFile(EthernetClient &client, const char *filename, const char *contentType);
 void serveThreshold(EthernetClient &client);
+void serveStatus(EthernetClient &client);
+void serveSystemInfo(EthernetClient &client);
 void serveRootPage(EthernetClient &client);
 
 #endif // STORAGE_H
