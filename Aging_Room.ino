@@ -5,7 +5,7 @@
 #include "display.h"
 #include "storage.h"
 
-// Notice: lastNtpEpoch has been removed from here!
+// Notice: lastNtpEpoch has been removed from here to fix the linker error!
 
 void setup() {
   Serial.begin(115200);
@@ -85,6 +85,7 @@ void loop() {
   readSensors();
   updateLEDs();
   updateDisplay();
+  
   // Handle NTP Syncing
   if (millis() - lastNtpCheck >= NTP_INTERVAL) {
     requestNtpTime();
@@ -115,11 +116,20 @@ void loop() {
     }
 
     bool currentLineIsBlank = true;
+    bool isFirstLine = true; // Memory fix: Track if we are reading the first line
+    
     String httpRequest = "";
+    httpRequest.reserve(64); // Memory fix: Pre-allocate 64 bytes to prevent heap fragmentation
+
     while (client.connected()) {
       if (client.available()) {
         char c = client.read();
-        httpRequest += c;
+        
+        // Memory fix: Only save the character if it's the first line AND we haven't exceeded our buffer
+        if (isFirstLine && httpRequest.length() < 60 && c != '\r' && c != '\n') {
+          httpRequest += c;
+        }
+
         if (c == '\n' && currentLineIsBlank) {
           // Route Handling
           if (httpRequest.startsWith("GET /threshold")) serveThreshold(client);
@@ -133,8 +143,14 @@ void loop() {
           }
           break;
         }
-        if (c == '\n') currentLineIsBlank = true;
-        else if (c != '\r') currentLineIsBlank = false;
+        
+        if (c == '\n') {
+          currentLineIsBlank = true;
+          isFirstLine = false; // We hit the first newline, stop saving junk to httpRequest
+        }
+        else if (c != '\r') {
+          currentLineIsBlank = false;
+        }
       }
     }
     delay(1);
