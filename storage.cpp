@@ -154,9 +154,6 @@ void serveStatus(EthernetClient &client) {
   client.println("Content-Type: text/plain");
   client.println("Connection: close");
   client.println();
-  // Format per sensor: LABEL:TEMP_C|STATE separated by commas
-  // Includes sensor label so JS can look up by ID, not by position
-  // STATE is OK, LOW, HIGH, or ERR
   const char* labels[] = {"A", "B", "C", "D"};
   float temps[] = {tA, tB, tC, tD};
   for (int i = 0; i < 4; i++) {
@@ -189,13 +186,11 @@ void serveSystemInfo(EthernetClient &client) {
   client.println("Connection: close");
   client.println();
 
-  // Free RAM
   int ram = freeMemory();
   client.print("RAM:");
   client.print(ram);
   client.print(",");
 
-  // Uptime from millis()
   unsigned long ms = millis();
   unsigned long secs  = ms / 1000;
   unsigned long mins  = secs / 60;
@@ -209,37 +204,44 @@ void serveSystemInfo(EthernetClient &client) {
   client.print(mins % 60);
   client.print("m,");
 
-  // SD card status
   client.print("SD:");
   client.print(SD.begin(SD_CHIP_SELECT) ? "OK" : "FAIL");
   client.print(",");
 
-  // Last CSV write — convert millis offset to real time
   if (lastCsvWrite == 0) {
     client.print("LASTWRITE:Never");
   } else {
-    // Calculate epoch at last write:
-    // currentEpoch is now, millis() is now, lastCsvWrite is millis at write time
     extern unsigned long currentEpoch;
     unsigned long secsAgo = (millis() - lastCsvWrite) / 1000;
     unsigned long writeEpoch = currentEpoch - secsAgo;
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(writeEpoch, y, mo, d, h, mi, s, wd);
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%02d-%02d-%04d %02d:%02d:%02d", mo+1, d, y, h, mi, s);
+    
+    // Convert to 12-hour AM/PM format
+    const char* ampm = (h >= 12) ? "PM" : "AM";
+    int displayHour = h % 12;
+    if (displayHour == 0) displayHour = 12; // 0 hour is 12 AM
+    
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
     client.print("LASTWRITE:");
     client.print(buf);
   }
   client.print(",");
 
-  // NTP last sync
   if (lastNtpEpoch == 0) {
     client.print("NTPSYNC:Never");
   } else {
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(lastNtpEpoch, y, mo, d, h, mi, s, wd);
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%02d-%02d-%04d %02d:%02d:%02d", mo+1, d, y, h, mi, s);
+    
+    // Convert to 12-hour AM/PM format
+    const char* ampm = (h >= 12) ? "PM" : "AM";
+    int displayHour = h % 12;
+    if (displayHour == 0) displayHour = 12; // 0 hour is 12 AM
+    
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
     client.print("NTPSYNC:");
     client.print(buf);
   }
@@ -265,11 +267,9 @@ void serveRootPage(EthernetClient &client) {
   client.println(F(".tab.active{background:#999;}"));
   client.println(F(".tab-content{display:none;}"));
   client.println(F(".tab-content.active{display:block;}"));
-  // FIX 1: Scrollable chart wrapper — replaces fixed canvas rule
   client.println(F("button{margin-left:10px;}"));
   client.println(F(".chart-scroll-wrapper{width:100%;background:#fff;}"));
   client.println(F(".chart-scroll-wrapper canvas{height:500px !important;display:block;}"));
-  // Status bar styles
   client.println(F("#statusBar{display:flex;gap:20px;align-items:center;padding:12px 16px;margin-bottom:12px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:15px;flex-wrap:wrap;}"));
   client.println(F(".sensor-dot{display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:6px;vertical-align:middle;}"));
   client.println(F(".dot-warn{background:#f39c12;}"));
@@ -278,7 +278,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F(".sensor-warn{color:#f39c12;}"));
   client.println(F(".sensor-err{color:#e74c3c;}"));
   client.println(F(".sensor-temp{color:#555;font-size:14px;margin-left:4px;}"));
-  // FIX 2: Per-sensor identity colors matching chart line colors
   client.println(F(".sensor-dot.s-a{background:red;} .sensor-label.s-a{color:red;}"));
   client.println(F(".sensor-dot.s-b{background:blue;} .sensor-label.s-b{color:blue;}"));
   client.println(F(".sensor-dot.s-c{background:green;} .sensor-label.s-c{color:green;}"));
@@ -294,7 +293,6 @@ void serveRootPage(EthernetClient &client) {
   client.print(lastUpdate);
   client.println(F("</span></p>"));
 
-  // Sensor status bar — initial render, server-side
   client.println(F("<div id='statusBar'>"));
   client.println(F("  <strong>Sensors:</strong>"));
 
@@ -309,7 +307,6 @@ void serveRootPage(EthernetClient &client) {
 
     client.print(F("  <span id='statusSensor"));
     client.print(sensorLabels[i]);
-    // Dot: identity class always present; state class added on top when needed
     client.print(F("'><span class='sensor-dot "));
     client.print(sensorIdClasses[i]);
     if (isErr)      client.print(F(" dot-err"));
@@ -350,7 +347,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<button onclick='confirmDelete(\"temp\")'>Delete Temperature CSV</button>"));
   client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(tempChart&&tempChart.resetZoom)tempChart.resetZoom()'>Reset Zoom</button>"));
-  // FIX 1: chart wrapped in scroll div
   client.println(F("<br><div class='chart-scroll-wrapper'><canvas id='tempChart'></canvas></div></div>"));
 
   client.println(F("<div id='humid' class='tab-content'>"));
@@ -360,8 +356,20 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<button onclick='confirmDelete(\"humid\")'>Delete Humidity CSV</button>"));
   client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
-  // FIX 1: chart wrapped in scroll div
   client.println(F("<br><div class='chart-scroll-wrapper'><canvas id='humidChart'></canvas></div></div>"));
+
+  client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
+  client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;'>System Status</div>"));
+  client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;'>"));
+  client.println(F("<span id='sysRam'>RAM: --</span>"));
+  client.println(F("<span id='sysUptime'>&#9201; Uptime: --</span>"));
+  client.println(F("<span id='sysSd'>&#128190; SD: --</span>"));
+  client.println(F("</div>"));
+  client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;margin-top:6px;'>"));
+  client.println(F("<span id='sysWrite'>&#128221; Last Write: --</span>"));
+  client.println(F("<span id='sysNtp'>&#128336; NTP Sync: --</span>"));
+  client.println(F("</div>"));
+  client.println(F("</div>"));
 
   client.println(F("<script>"));
   client.println(F("let tempChart, humidChart;"));
@@ -392,9 +400,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  }"));
   client.println(F("}"));
 
-  // FIX 3: updateStatusBar keyed by sensor label, NOT array index.
-  // serveStatus now prefixes each record with "A:", "B:", etc.
-  // This means legend hide/show never corrupts the status bar.
   client.println(F("const sensorMap = {"));
   client.println(F("  'A': {idClass:'s-a', color:'red'},"));
   client.println(F("  'B': {idClass:'s-b', color:'blue'},"));
@@ -417,7 +422,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    const isHigh = state === 'HIGH';"));
   client.println(F("    const info = sensorMap[label];"));
   client.println(F("    if (!info) return;"));
-  // Look up by fixed element ID — immune to chart dataset index shifts
   client.println(F("    const el = document.getElementById('statusSensor' + label);"));
   client.println(F("    if (el) {"));
   client.println(F("      const dot = el.querySelector('.sensor-dot');"));
@@ -437,8 +441,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        if (tmp) tmp.textContent = cVal.toFixed(1) + '\u00b0C (' + fVal + '\u00b0F)' + suffix;"));
   client.println(F("      }"));
   client.println(F("    }"));
-  // Chart lines keep sensor identity color always — only ERR turns line red
-  // LOW/HIGH only affects the status bar dot/label, not the chart line color
   client.println(F("    if (tempChart) {"));
   client.println(F("      const ds = tempChart.data.datasets.find(d => d.label === 'Sensor ' + label);"));
   client.println(F("      if (ds) {"));
@@ -448,7 +450,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      }"));
   client.println(F("    }"));
   client.println(F("  });"));
-  // Update chart once after all sensors processed, not once per sensor
   client.println(F("  if (tempChart) tempChart.update();"));
   client.println(F("}"));
 
@@ -464,7 +465,13 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    let [date, time, a, b, c, d] = line.split(',');"));
   client.println(F("    let dt = new Date(date + ' ' + time);"));
   client.println(F("    if(dt.getTime() >= limit){"));
-  client.println(F("      labels.push(date + ' ' + time);"));
+  client.println(F("      let [hourStr, minStr, secStr] = time.split(':');"));
+  client.println(F("      let hour = parseInt(hourStr);"));
+  client.println(F("      let ampm = hour >= 12 ? 'PM' : 'AM';"));
+  client.println(F("      hour = hour % 12;"));
+  client.println(F("      hour = hour ? hour : 12;"));
+  client.println(F("      let formattedTime = hour + ':' + minStr + ':' + secStr + ' ' + ampm;"));
+  client.println(F("      labels.push(date + ' ' + formattedTime);"));
   client.println(F("      sensorsA.push(parseFloat(a) || null);"));
   client.println(F("      sensorsB.push(parseFloat(b) || null);"));
   client.println(F("      sensorsC.push(parseFloat(c) || null);"));
@@ -622,21 +629,16 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      const i = p.indexOf(':');"));
   client.println(F("      if (i !== -1) pairs[p.substring(0,i).trim()] = p.substring(i+1).trim();"));
   client.println(F("    });"));
-  // RAM with color indicator
   client.println(F("    const ram = parseInt(pairs['RAM'] || 0);"));
   client.println(F("    const ramColor = ram > 2000 ? '#2ecc71' : ram > 1000 ? '#f39c12' : '#e74c3c';"));
   client.println(F("    const ramEl = document.getElementById('sysRam');"));
-  client.println(F("    if (ramEl) ramEl.innerHTML = '<span class=\'sys-dot\' style=\'background:' + ramColor + '\'></span>RAM: ' + (ram/1024).toFixed(1) + ' KB';"));
-  // Uptime
+  client.println(F("    if (ramEl) ramEl.innerHTML = 'RAM: <span style=\"color:' + ramColor + '; font-weight:bold;\">' + (ram/1024).toFixed(1) + ' KB</span>';"));
   client.println(F("    const upEl = document.getElementById('sysUptime');"));
   client.println(F("    if (upEl) upEl.textContent = 'Uptime: ' + (pairs['UPTIME'] || '--');"));
-  // SD
   client.println(F("    const sdEl = document.getElementById('sysSd');"));
   client.println(F("    if (sdEl) { sdEl.textContent = 'SD: ' + (pairs['SD'] || '--'); sdEl.style.color = pairs['SD']==='OK' ? '#27ae60' : '#e74c3c'; }"));
-  // Last write
   client.println(F("    const wrEl = document.getElementById('sysWrite');"));
   client.println(F("    if (wrEl) wrEl.textContent = 'Last Write: ' + (pairs['LASTWRITE'] || '--');"));
-  // NTP sync
   client.println(F("    const ntpEl = document.getElementById('sysNtp');"));
   client.println(F("    if (ntpEl) ntpEl.textContent = 'NTP Sync: ' + (pairs['NTPSYNC'] || '--');"));
   client.println(F("  } catch(e) {}"));
@@ -649,20 +651,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("}"));
 
   client.println(F("</script>"));
-
-  // System status panel — HTML must be OUTSIDE the script tag
-  client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
-  client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;'>System Status</div>"));
-  client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;'>"));
-  client.println(F("<span id='sysRam'><span class='sys-dot' style='background:#2ecc71;'></span>RAM: --</span>"));
-  client.println(F("<span id='sysUptime'>&#9201; Uptime: --</span>"));
-  client.println(F("<span id='sysSd'>&#128190; SD: --</span>"));
-  client.println(F("</div>"));
-  client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;margin-top:6px;'>"));
-  client.println(F("<span id='sysWrite'>&#128221; Last Write: --</span>"));
-  client.println(F("<span id='sysNtp'>&#128336; NTP Sync: --</span>"));
-  client.println(F("</div>"));
-  client.println(F("</div>"));
 
   client.println(F("</body></html>"));
 }

@@ -5,6 +5,9 @@
 #include "display.h"
 #include "storage.h"
 
+// Track the last successful NTP sync epoch
+unsigned long lastNtpEpoch = 0; 
+
 void setup() {
   Serial.begin(115200);
   while (!Serial);
@@ -27,20 +30,13 @@ void setup() {
   Serial.println("Starting Ethernet with DHCP...");
   if (Ethernet.begin(mac) == 0) {
     Serial.println("DHCP failed. Trying static IP...");
-
-     IPAddress ip(192, 168, 48, 20);
-     IPAddress gateway(192, 168, 48, 1);
-     IPAddress subnet(255, 255, 255, 0);
-    
+    IPAddress ip(192, 168, 48, 20);
+    IPAddress gateway(192, 168, 48, 1);
+    IPAddress subnet(255, 255, 255, 0);
     Ethernet.begin(mac, ip, gateway, subnet);
-    Serial.println("Static IP assigned.");
-  } else {
-    Serial.println("DHCP successful.");
   }
 
-  delay(1000);
-  Serial.print("Ethernet IP: ");
-  Serial.println(Ethernet.localIP());
+  // --- START 5-SECOND BOOT DISPLAY ---
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Ethernet IP:");
@@ -49,37 +45,38 @@ void setup() {
   lcd.setCursor(0, 2);
   lcd.print("DNS Name:");
 
-  // Scroll hostname across line 3 for 10 seconds
   const char* hostname = "agingroom00.mach.hq.seegrid.lan";
-  String scrollText = String(hostname) + "    ";  // trailing spaces to clear edge
+  String scrollText = String(hostname) + "    ";
   int scrollLen = scrollText.length();
   unsigned long scrollStart = millis();
   int scrollPos = 0;
-  while (millis() - scrollStart < 10000) {
+
+  // This loop runs for exactly 5000ms (5 seconds)
+  while (millis() - scrollStart < 5000) {
     lcd.setCursor(0, 3);
     String display = "";
     for (int i = 0; i < 20; i++) {
       display += scrollText[(scrollPos + i) % scrollLen];
     }
     lcd.print(display);
-    delay(300);
+    delay(300); // Scrolling speed
     scrollPos = (scrollPos + 1) % scrollLen;
   }
   lcd.clear();
+  // --- END BOOT DISPLAY ---
 
   Udp.begin(UDP_LOCAL_PORT);
   requestNtpTime();
   lastNtpCheck = millis();
+  lastNtpEpoch = currentEpoch; 
 
   initSDCard();
-
   lastDisplaySwitch = millis();
   server.begin();
 }
 
 void loop() {
   unsigned long now = millis();
-  
   static unsigned long lastEpochUpdate = 0;
   if (now - lastEpochUpdate >= 1000) {
     currentEpoch++;
@@ -91,16 +88,20 @@ void loop() {
   updateLEDs();
   updateDisplay();
 
+  // Handle NTP Syncing
   if (millis() - lastNtpCheck >= NTP_INTERVAL) {
     requestNtpTime();
     lastNtpCheck = millis();
+    lastNtpEpoch = currentEpoch; 
   }
 
+  // Write to SD Card
   if (millis() - lastCsvWrite >= CSV_WRITE_INTERVAL) {
     appendCsvData();
     lastCsvWrite = millis();
   }
 
+  // Socket Cleanup (Helps prevent Connection Refused errors)
   static unsigned long lastCleanup = 0;
   if (millis() - lastCleanup > 30000) {
     cleanupStaleConnections();
@@ -110,163 +111,35 @@ void loop() {
   EthernetClient client = server.available();
   if (client) {
     IPAddress clientIP = client.remoteIP();
-    
     if (!canAcceptConnection(clientIP)) {
       sendServiceUnavailable(client);
-      delay(1);
       client.stop();
       return;
     }
 
     bool currentLineIsBlank = true;
     String httpRequest = "";
-    unsigned long connectionStart = millis();
-    const unsigned long requestTimeout = 5000;
-
     while (client.connected()) {
-      if (millis() - connectionStart > requestTimeout) {
-        Serial.println("Request timeout");
-        break;
-      }
-
       if (client.available()) {
         char c = client.read();
         httpRequest += c;
-
-        if (httpRequest.length() > 1024) {
-          client.println("HTTP/1.1 413 Request Entity Too Large");
-          client.println("Connection: close");
-          client.println();
+        if (c == '\n' && currentLineIsBlank) {
+          // Route Handling
+          if (httpRequest.startsWith("GET /threshold")) serveThreshold(client);
+          else if (httpRequest.startsWith("GET /status")) serveStatus(client);
+          else if (httpRequest.startsWith("GET /sysinfo")) serveSystemInfo(client);
+          else if (httpRequest.startsWith("GET /temp.csv")) serveFile(client, "temp.csv", "text/csv");
+          else if (httpRequest.startsWith("GET /humid.csv")) serveFile(client, "humid.csv", "text/csv");
+          else if (httpRequest.startsWith("GET / ")) serveRootPage(client);
+          else {
+            client.println("HTTP/1.1 404 Not Found\nConnection: close\n");
+          }
           break;
         }
-
-        if (c == '\n' && currentLineIsBlank) {
-          if (httpRequest.startsWith("GET /threshold")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              serveThreshold(client);
-            }
-            break;
-          } else if (httpRequest.startsWith("GET /status")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              serveStatus(client);
-            }
-            break;
-          } else if (httpRequest.startsWith("GET /sysinfo")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              serveSystemInfo(client);
-            }
-            break;
-          } else if (httpRequest.startsWith("GET /temp.csv")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              serveFile(client, "temp.csv", "text/csv");
-            }
-            break;
-          } else if (httpRequest.startsWith("GET /humid.csv")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              serveFile(client, "humid.csv", "text/csv");
-            }
-            break;
-          } else if (httpRequest.startsWith("GET /delete_temp")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              SD.remove("temp.csv");
-              createCsvHeaderIfNeeded();
-              client.println("HTTP/1.1 200 OK");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Temperature CSV deleted.");
-            }
-            break;
-          } else if (httpRequest.startsWith("GET /delete_humid")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              SD.remove("humid.csv");
-              createCsvHeaderIfNeeded();
-              client.println("HTTP/1.1 200 OK");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Humidity CSV deleted.");
-            }
-            break;
-          } else if (httpRequest.startsWith("GET / ") || httpRequest.startsWith("GET / HTTP")) {
-            if (!checkAuth(httpRequest)) {
-              client.println("HTTP/1.1 401 Unauthorized");
-              client.println("WWW-Authenticate: Basic realm=\"Aging Room\"");
-              client.println("Content-Type: text/plain");
-              client.println("Connection: close");
-              client.println();
-              client.println("Authentication required.");
-            } else {
-              serveRootPage(client);
-            }
-            break;
-          } else {
-            client.println("HTTP/1.1 404 Not Found");
-            client.println("Content-Type: text/plain");
-            client.println("Connection: close");
-            client.println();
-            client.println("404 Not Found");
-            break;
-          }
-        }
-
-        if (c == '\n') {
-          currentLineIsBlank = true;
-        } else if (c != '\r') {
-          currentLineIsBlank = false;
-        }
+        if (c == '\n') currentLineIsBlank = true;
+        else if (c != '\r') currentLineIsBlank = false;
       }
     }
-    
     delay(1);
     client.stop();
     releaseConnection(clientIP);
