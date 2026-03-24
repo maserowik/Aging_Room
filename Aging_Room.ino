@@ -5,8 +5,7 @@
 #include "display.h"
 #include "storage.h"
 
-// Track the last successful NTP sync epoch
-unsigned long lastNtpEpoch = 0; 
+// Notice: lastNtpEpoch has been removed from here!
 
 void setup() {
   Serial.begin(115200);
@@ -50,7 +49,6 @@ void setup() {
   int scrollLen = scrollText.length();
   unsigned long scrollStart = millis();
   int scrollPos = 0;
-
   // This loop runs for exactly 5000ms (5 seconds)
   while (millis() - scrollStart < 5000) {
     lcd.setCursor(0, 3);
@@ -87,7 +85,6 @@ void loop() {
   readSensors();
   updateLEDs();
   updateDisplay();
-
   // Handle NTP Syncing
   if (millis() - lastNtpCheck >= NTP_INTERVAL) {
     requestNtpTime();
