@@ -48,7 +48,7 @@ void setup() {
   unsigned long scrollStart = millis();
   int scrollPos = 0;
   
-  while (millis() - scrollStart < 5000) {
+  while (millis() - scrollStart < 10000) {
     lcd.setCursor(0, 3);
     String display = "";
     for (int i = 0; i < 20; i++) {
