@@ -47,7 +47,7 @@ void setup() {
   int scrollLen = scrollText.length();
   unsigned long scrollStart = millis();
   int scrollPos = 0;
-  // This loop runs for exactly 5000ms (5 seconds)
+  
   while (millis() - scrollStart < 5000) {
     lcd.setCursor(0, 3);
     String display = "";
@@ -55,7 +55,7 @@ void setup() {
       display += scrollText[(scrollPos + i) % scrollLen];
     }
     lcd.print(display);
-    delay(300); // Scrolling speed
+    delay(300); 
     scrollPos = (scrollPos + 1) % scrollLen;
   }
   lcd.clear();
@@ -74,8 +74,6 @@ void loop() {
   unsigned long now = millis();
   static unsigned long lastEpochUpdate = millis();
   
-  // FIX 1: The Catch-Up Loop. If the Arduino gets busy serving a webpage, 
-  // this ensures currentEpoch quickly catches up and never drifts behind real time.
   while (now - lastEpochUpdate >= 1000) {
     currentEpoch++;
     lastEpochUpdate += 1000;
@@ -86,30 +84,36 @@ void loop() {
   updateLEDs();
   updateDisplay();
   
-  // Handle NTP Syncing
   if (millis() - lastNtpCheck >= NTP_INTERVAL) {
     requestNtpTime();
     lastNtpCheck = millis();
   }
 
-  // --- FIX 2: Bulletproof Time-Aligned Logging ---
-  static unsigned long nextLogEpoch = 0;
+  // --- The Midnight Janitor (6-Month Cleanup) ---
+  static int lastPurgeDay = -1;
+  if (currentEpoch > 1000000000UL) { 
+    int y, mo, d, h, mi, s, wd;
+    epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
+    
+    // If exactly midnight and not yet purged today
+    if (h == 0 && mi == 0 && d != lastPurgeDay) {
+      purgeOldLogs();
+      lastPurgeDay = d; 
+    }
+  }
 
-  // Check if we have a valid internet time (Epoch > 1 Billion ensures year is > 2001)
+  // --- Time-Aligned Logging ---
+  static unsigned long nextLogEpoch = 0;
   if (currentEpoch > 1000000000UL) { 
     if (nextLogEpoch == 0) {
-      // Calculate the exact epoch time for the NEXT 5-minute boundary
       nextLogEpoch = currentEpoch + (300 - (currentEpoch % 300));
     }
-
-    // Using >= ensures we NEVER miss a log, even if the loop was delayed by a web request
     if (currentEpoch >= nextLogEpoch) {
       appendCsvData();
       lastCsvWrite = millis();
-      nextLogEpoch += 300; // Set target for exactly 5 minutes later
+      nextLogEpoch += 300; 
     }
   } else {
-    // Fallback if the internet is down on boot
     if (millis() - lastCsvWrite >= CSV_WRITE_INTERVAL) {
       appendCsvData();
       lastCsvWrite = millis();
@@ -134,7 +138,6 @@ void loop() {
 
     bool currentLineIsBlank = true;
     bool isFirstLine = true; 
-    
     String httpRequest = "";
     httpRequest.reserve(64); 
 
@@ -147,11 +150,41 @@ void loop() {
         }
 
         if (c == '\n' && currentLineIsBlank) {
+          
           if (httpRequest.startsWith("GET /threshold")) serveThreshold(client);
           else if (httpRequest.startsWith("GET /status")) serveStatus(client);
           else if (httpRequest.startsWith("GET /sysinfo")) serveSystemInfo(client);
           else if (httpRequest.startsWith("GET /temp.csv")) serveFile(client, "temp.csv", "text/csv");
           else if (httpRequest.startsWith("GET /humid.csv")) serveFile(client, "humid.csv", "text/csv");
+          
+          // --- The Archive File Fetcher ---
+          else if (httpRequest.startsWith("GET /archive?file=")) {
+            int startIdx = 18;
+            int endIdx = httpRequest.indexOf(' ', startIdx);
+            if (endIdx != -1) {
+              String fileName = httpRequest.substring(startIdx, endIdx);
+              // Serve specifically as a direct download attachment
+              if (SD.exists(fileName.c_str())) {
+                File file = SD.open(fileName.c_str(), FILE_READ);
+                client.println("HTTP/1.1 200 OK");
+                client.println("Content-Type: text/csv");
+                client.print("Content-Disposition: attachment; filename=\"");
+                client.print(fileName);
+                client.println("\"");
+                client.println("Connection: close\n");
+                while (file.available()) { client.write(file.read()); }
+                file.close();
+              } else {
+                client.println("HTTP/1.1 404 Not Found\nConnection: close\n");
+              }
+            }
+          }
+          
+          else if (httpRequest.startsWith("GET /cleanup")) {
+            SD.remove("temp.csv");
+            SD.remove("humid.csv");
+            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nSUCCESS: Old temp.csv and humid.csv have been deleted!");
+          }
           else if (httpRequest.startsWith("GET / ")) serveRootPage(client);
           else {
             client.println("HTTP/1.1 404 Not Found\nConnection: close\n");
