@@ -74,12 +74,13 @@ bool canAcceptConnection(IPAddress clientIP) {
 
   globalConnectionCount++;
 
-  Serial.print("Connection accepted. IP: ");
-  Serial.print(clientIP);
-  Serial.print(" | Global: ");
-  Serial.print(globalConnectionCount);
-  Serial.print("/");
-  Serial.println(MAX_GLOBAL_CONNECTIONS);
+  // --- THESE PRINTS ARE NOW SILENCED ---
+  // Serial.print("Connection accepted. IP: ");
+  // Serial.print(clientIP);
+  // Serial.print(" | Global: ");
+  // Serial.print(globalConnectionCount);
+  // Serial.print("/");
+  // Serial.println(MAX_GLOBAL_CONNECTIONS);
 
   return true;
 }
@@ -98,12 +99,13 @@ void releaseConnection(IPAddress clientIP) {
         globalConnectionCount--;
       }
 
-      Serial.print("Connection released. IP: ");
-      Serial.print(clientIP);
-      Serial.print(" | Global: ");
-      Serial.print(globalConnectionCount);
-      Serial.print("/");
-      Serial.println(MAX_GLOBAL_CONNECTIONS);
+      // --- THESE PRINTS ARE NOW SILENCED ---
+      // Serial.print("Connection released. IP: ");
+      // Serial.print(clientIP);
+      // Serial.print(" | Global: ");
+      // Serial.print(globalConnectionCount);
+      // Serial.print("/");
+      // Serial.println(MAX_GLOBAL_CONNECTIONS);
       break;
     }
   }

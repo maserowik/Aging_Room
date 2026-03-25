@@ -3,18 +3,16 @@
 #include "sensors.h"
 #include "display.h"
 
-// External LCD reference — declared here at file scope, not inside functions
+// External LCD reference
 extern LiquidCrystal_I2C lcd;
 
-// Free RAM measurement for Arduino Mega
-// Measures gap between heap top and stack bottom
+// Free RAM measurement
 int freeMemory() {
   extern int __heap_start, *__brkval;
   int v;
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
 }
 
-// Global timing variable
 unsigned long lastCsvWrite = 0;
 
 void initSDCard() {
@@ -23,7 +21,6 @@ void initSDCard() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("SD Init Failed!");
-
     while (true) {
       digitalWrite(RED_LED_PIN, HIGH);
       delay(500);
@@ -32,34 +29,74 @@ void initSDCard() {
     }
   } else {
     Serial.println("SD card initialized.");
-    createCsvHeaderIfNeeded();
+    // We no longer manually create temp.csv here. 
+    // The daily files are created dynamically!
+  }
+}
+
+// Helper function to cleanly rotate the 7-day logs
+void prepareDailyFile(const char* filename, String currentDateStr) {
+  bool needsRecreate = false;
+  
+  if (!SD.exists(filename)) {
+    needsRecreate = true;
+  } else {
+    File f = SD.open(filename, FILE_READ);
+    if (f) {
+      // Skip the header line
+      while (f.available()) { if (f.read() == '\n') break; }
+      
+      // Read the Date from the first row of data
+      String fileDate = "";
+      while (f.available() && fileDate.length() < 10) {
+        char c = f.read();
+        if (c == ',' || c == '\n' || c == '\r') break;
+        fileDate += c;
+      }
+      f.close();
+      
+      // If the file has old data that doesn't match today, it's a week old. Wipe it!
+      if (fileDate.length() > 0 && fileDate != currentDateStr) {
+        needsRecreate = true;
+      }
+    } else {
+      needsRecreate = true;
+    }
+  }
+
+  if (needsRecreate) {
+    SD.remove(filename);
+    File f = SD.open(filename, FILE_WRITE);
+    if (f) {
+      f.println("Date,Time,Sensor A,Sensor B,Sensor C,Sensor D");
+      f.close();
+    }
   }
 }
 
 void createCsvHeaderIfNeeded() {
-  if (!SD.exists("temp.csv")) {
-    File f = SD.open("temp.csv", FILE_WRITE);
-    if (f) {
-      f.println("Date,Time,Sensor A,Sensor B,Sensor C,Sensor D");
-      f.close();
-    }
-  }
-  if (!SD.exists("humid.csv")) {
-    File f = SD.open("humid.csv", FILE_WRITE);
-    if (f) {
-      f.println("Date,Time,Sensor A,Sensor B,Sensor C,Sensor D");
-      f.close();
-    }
-  }
+  // Legacy function kept to prevent errors in other files, but no longer used.
 }
 
 void appendCsvData() {
+  extern unsigned long currentEpoch;
+  int year, month, day, hour, minute, second, weekday;
+  epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
+
+  // Generate filenames based on the day of the week (0=Sun, 1=Mon... 6=Sat)
+  char tFile[10]; snprintf(tFile, sizeof(tFile), "%d_T.csv", weekday);
+  char hFile[10]; snprintf(hFile, sizeof(hFile), "%d_H.csv", weekday);
+
   String dateStr = getDateString();
   String timeStr = getTimeString();
 
+  // Ensure the file exists and is wiped if it's from a week ago
+  prepareDailyFile(tFile, dateStr);
+  prepareDailyFile(hFile, dateStr);
+
   extern float tA, tB, tC, tD, hA, hB, hC, hD;
 
-  File tf = SD.open("temp.csv", FILE_WRITE);
+  File tf = SD.open(tFile, FILE_WRITE);
   if (tf) {
     tf.print(dateStr + "," + timeStr + ",");
     tf.print(isnan(tA) ? "ERR" : String(tA, 1) + " C");
@@ -70,24 +107,9 @@ void appendCsvData() {
     tf.print(",");
     tf.println(isnan(tD) ? "ERR" : String(tD, 1) + " C");
     tf.close();
-
-    Serial.print("Temperature data written to temp.csv: ");
-    Serial.print(dateStr);
-    Serial.print(", ");
-    Serial.print(timeStr);
-    Serial.print(", ");
-    Serial.print(isnan(tA) ? "ERR" : String(tA, 1) + " C");
-    Serial.print(", ");
-    Serial.print(isnan(tB) ? "ERR" : String(tB, 1) + " C");
-    Serial.print(", ");
-    Serial.print(isnan(tC) ? "ERR" : String(tC, 1) + " C");
-    Serial.print(", ");
-    Serial.println(isnan(tD) ? "ERR" : String(tD, 1) + " C");
-  } else {
-    Serial.println("Failed to open temp.csv for writing.");
   }
 
-  File hf = SD.open("humid.csv", FILE_WRITE);
+  File hf = SD.open(hFile, FILE_WRITE);
   if (hf) {
     hf.print(dateStr + "," + timeStr + ",");
     hf.print(isnan(hA) ? "ERR" : String(hA, 1) + " %");
@@ -98,25 +120,52 @@ void appendCsvData() {
     hf.print(",");
     hf.println(isnan(hD) ? "ERR" : String(hD, 1) + " %");
     hf.close();
-
-    Serial.print("Humidity data written to humid.csv: ");
-    Serial.print(dateStr);
-    Serial.print(", ");
-    Serial.print(timeStr);
-    Serial.print(", ");
-    Serial.print(isnan(hA) ? "ERR" : String(hA, 1) + " %");
-    Serial.print(", ");
-    Serial.print(isnan(hB) ? "ERR" : String(hB, 1) + " %");
-    Serial.print(", ");
-    Serial.print(isnan(hC) ? "ERR" : String(hC, 1) + " %");
-    Serial.print(", ");
-    Serial.println(isnan(hD) ? "ERR" : String(hD, 1) + " %");
-  } else {
-    Serial.println("Failed to open humid.csv for writing.");
   }
 }
 
 void serveFile(EthernetClient &client, const char *filename, const char *contentType) {
+  // The Virtual File Trick: Stitching 7 daily logs together on the fly!
+  if (strcmp(filename, "temp.csv") == 0 || strcmp(filename, "humid.csv") == 0) {
+    bool isTemp = (strcmp(filename, "temp.csv") == 0);
+
+    client.println("HTTP/1.1 200 OK");
+    client.print("Content-Type: ");
+    client.println(contentType);
+    client.print("Content-Disposition: inline; filename=\"");
+    client.print(filename);
+    client.println("\"");
+    client.println("Connection: close");
+    client.println();
+
+    // Send the Master Header once
+    client.println("Date,Time,Sensor A,Sensor B,Sensor C,Sensor D");
+
+    extern unsigned long currentEpoch;
+    int year, month, day, hour, minute, second, weekday;
+    epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
+
+    // Stream chronologically: Oldest day to Newest day (today)
+    for (int offset = 1; offset <= 7; offset++) {
+      int targetDay = (weekday + offset) % 7;
+      char fn[10];
+      if (isTemp) snprintf(fn, sizeof(fn), "%d_T.csv", targetDay);
+      else        snprintf(fn, sizeof(fn), "%d_H.csv", targetDay);
+
+      if (SD.exists(fn)) {
+        File f = SD.open(fn, FILE_READ);
+        if (f) {
+          // Skip the header line in the daily file
+          while(f.available()) { if (f.read() == '\n') break; }
+          // Stream the raw data blocks
+          while(f.available()) { client.write(f.read()); }
+          f.close();
+        }
+      }
+    }
+    return;
+  }
+
+  // Fallback for any other basic files
   if (SD.exists(filename)) {
     File file = SD.open(filename, FILE_READ);
     client.println("HTTP/1.1 200 OK");
@@ -130,11 +179,7 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
     }
     file.close();
   } else {
-    client.println("HTTP/1.1 404 Not Found");
-    client.println("Content-Type: text/plain");
-    client.println("Connection: close");
-    client.println();
-    client.println("File not found");
+    client.println("HTTP/1.1 404 Not Found\nConnection: close\n");
   }
 }
 
@@ -217,10 +262,9 @@ void serveSystemInfo(EthernetClient &client) {
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(writeEpoch, y, mo, d, h, mi, s, wd);
     
-    // Convert to 12-hour AM/PM format
     const char* ampm = (h >= 12) ? "PM" : "AM";
     int displayHour = h % 12;
-    if (displayHour == 0) displayHour = 12; // 0 hour is 12 AM
+    if (displayHour == 0) displayHour = 12;
     
     char buf[24];
     snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
@@ -235,10 +279,9 @@ void serveSystemInfo(EthernetClient &client) {
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(lastNtpEpoch, y, mo, d, h, mi, s, wd);
     
-    // Convert to 12-hour AM/PM format
     const char* ampm = (h >= 12) ? "PM" : "AM";
     int displayHour = h % 12;
-    if (displayHour == 0) displayHour = 12; // 0 hour is 12 AM
+    if (displayHour == 0) displayHour = 12;
     
     char buf[24];
     snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
@@ -272,18 +315,27 @@ void serveRootPage(EthernetClient &client) {
   client.println(F(".chart-scroll-wrapper canvas{height:500px !important;display:block;}"));
   client.println(F("#statusBar{display:flex;gap:20px;align-items:center;padding:12px 16px;margin-bottom:12px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:15px;flex-wrap:wrap;}"));
   client.println(F(".sensor-dot{display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:6px;vertical-align:middle;}"));
+  
+  client.println(F("@keyframes errorBlink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }"));
+  
   client.println(F(".dot-warn{background:#f39c12;}"));
-  client.println(F(".dot-err{background:#e74c3c;}"));
+  client.println(F(".dot-err{background:#e74c3c; animation: errorBlink 1s infinite;}"));
+  
   client.println(F(".sensor-label{font-weight:bold;}"));
   client.println(F(".sensor-warn{color:#f39c12;}"));
-  client.println(F(".sensor-err{color:#e74c3c;}"));
+  client.println(F(".sensor-err{color:#e74c3c; animation: errorBlink 1s infinite;}"));
+  
   client.println(F(".sensor-temp{color:#555;font-size:14px;margin-left:4px;}"));
-  client.println(F(".sensor-dot.s-a{background:red;} .sensor-label.s-a{color:red;}"));
-  client.println(F(".sensor-dot.s-b{background:blue;} .sensor-label.s-b{color:blue;}"));
-  client.println(F(".sensor-dot.s-c{background:green;} .sensor-label.s-c{color:green;}"));
-  client.println(F(".sensor-dot.s-d{background:orange;} .sensor-label.s-d{color:orange;}"));
+  
+  client.println(F(".sensor-dot.s-a{background:#0072B2;} .sensor-label.s-a{color:#0072B2;}")); 
+  client.println(F(".sensor-dot.s-b{background:#E69F00;} .sensor-label.s-b{color:#E69F00;}")); 
+  client.println(F(".sensor-dot.s-c{background:#CC79A7;} .sensor-label.s-c{color:#CC79A7;}")); 
+  client.println(F(".sensor-dot.s-d{background:#56B4E9;} .sensor-label.s-d{color:#56B4E9;}")); 
+  
   client.println(F("</style>"));
+  
   client.println(F("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"));
+  client.println(F("<script src='https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js'></script>"));
   client.println(F("<script src='https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js'></script>"));
   client.println(F("<script src='https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js'></script>"));
   client.println(F("</head><body>"));
@@ -340,11 +392,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<div class='tab' onclick=\"showTab('humid', event)\">Humidity</div>"));
   client.println(F("</div>"));
 
+  // Delete buttons have been removed since rotation is automatic!
   client.println(F("<div id='temp' class='tab-content active'>"));
   client.println(F("<label>Range: <select id='tempRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
   client.println(F("<button onclick='downloadChart(tempChart, \"temp\")'>Export Temperature PNG</button>"));
   client.println(F("<button onclick=\"window.location='/temp.csv'\">Download Temperature CSV</button>"));
-  client.println(F("<button onclick='confirmDelete(\"temp\")'>Delete Temperature CSV</button>"));
   client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(tempChart&&tempChart.resetZoom)tempChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><div class='chart-scroll-wrapper'><canvas id='tempChart'></canvas></div></div>"));
@@ -353,7 +405,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<label>Range: <select id='humidRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
   client.println(F("<button onclick='downloadChart(humidChart, \"humid\")'>Export Humidity PNG</button>"));
   client.println(F("<button onclick=\"window.location='/humid.csv'\">Download Humidity CSV</button>"));
-  client.println(F("<button onclick='confirmDelete(\"humid\")'>Delete Humidity CSV</button>"));
   client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><div class='chart-scroll-wrapper'><canvas id='humidChart'></canvas></div></div>"));
@@ -394,17 +445,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  link.click();"));
   client.println(F("}"));
 
-  client.println(F("function confirmDelete(type) {"));
-  client.println(F("  if(confirm('Are you sure you want to delete the ' + type + ' CSV file?')) {"));
-  client.println(F("    window.location = '/delete_' + type;"));
-  client.println(F("  }"));
-  client.println(F("}"));
-
   client.println(F("const sensorMap = {"));
-  client.println(F("  'A': {idClass:'s-a', color:'red'},"));
-  client.println(F("  'B': {idClass:'s-b', color:'blue'},"));
-  client.println(F("  'C': {idClass:'s-c', color:'green'},"));
-  client.println(F("  'D': {idClass:'s-d', color:'orange'}"));
+  client.println(F("  'A': {idClass:'s-a', color:'#0072B2'},"));
+  client.println(F("  'B': {idClass:'s-b', color:'#E69F00'},"));
+  client.println(F("  'C': {idClass:'s-c', color:'#CC79A7'},"));
+  client.println(F("  'D': {idClass:'s-d', color:'#56B4E9'}"));
   client.println(F("};"));
 
   client.println(F("function updateStatusBar(records) {"));
@@ -454,7 +499,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("}"));
 
   client.println(F("async function fetchData(filename, rangeDays) {"));
-  client.println(F("  let res = await fetch('/' + filename);"));
+  client.println(F("  let res = await fetch('/' + filename + '?t=' + new Date().getTime());"));
   client.println(F("  let text = await res.text();"));
   client.println(F("  let lines = text.trim().split('\\n').slice(1);"));
   client.println(F("  let limit = new Date().getTime() - rangeDays * 86400000;"));
@@ -463,15 +508,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  lines.forEach((line, idx) => {"));
   client.println(F("    if (idx % downsampleRate !== 0) return;"));
   client.println(F("    let [date, time, a, b, c, d] = line.split(',');"));
-  client.println(F("    let dt = new Date(date + ' ' + time);"));
+  client.println(F("    let dtStr = date.split('-').join('/') + ' ' + time;"));
+  client.println(F("    let dt = new Date(dtStr);"));
   client.println(F("    if(dt.getTime() >= limit){"));
-  client.println(F("      let [hourStr, minStr, secStr] = time.split(':');"));
-  client.println(F("      let hour = parseInt(hourStr);"));
-  client.println(F("      let ampm = hour >= 12 ? 'PM' : 'AM';"));
-  client.println(F("      hour = hour % 12;"));
-  client.println(F("      hour = hour ? hour : 12;"));
-  client.println(F("      let formattedTime = hour + ':' + minStr + ':' + secStr + ' ' + ampm;"));
-  client.println(F("      labels.push(date + ' ' + formattedTime);"));
+  client.println(F("      labels.push(dt.getTime());"));
   client.println(F("      sensorsA.push(parseFloat(a) || null);"));
   client.println(F("      sensorsB.push(parseFloat(b) || null);"));
   client.println(F("      sensorsC.push(parseFloat(c) || null);"));
@@ -483,7 +523,7 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("async function pollThreshold() {"));
   client.println(F("  try {"));
-  client.println(F("    let res = await fetch('/threshold');"));
+  client.println(F("    let res = await fetch('/threshold?t=' + new Date().getTime());"));
   client.println(F("    let val = parseFloat(await res.text());"));
   client.println(F("    if (!isNaN(val) && val !== threshold) {"));
   client.println(F("      threshold = val;"));
@@ -494,7 +534,7 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("async function pollStatus() {"));
   client.println(F("  try {"));
-  client.println(F("    let res = await fetch('/status');"));
+  client.println(F("    let res = await fetch('/status?t=' + new Date().getTime());"));
   client.println(F("    let text = await res.text();"));
   client.println(F("    updateStatusBar(text.trim().split(','));"));
   client.println(F("  } catch(e) {}"));
@@ -522,10 +562,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    data: {"));
   client.println(F("      labels: tempData.labels,"));
   client.println(F("      datasets: ["));
-  client.println(F("        {label: 'Sensor A', data: tempData.sensorsA, borderColor: 'red', backgroundColor: 'red', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor B', data: tempData.sensorsB, borderColor: 'blue', backgroundColor: 'blue', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor C', data: tempData.sensorsC, borderColor: 'green', backgroundColor: 'green', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor D', data: tempData.sensorsD, borderColor: 'orange', backgroundColor: 'orange', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor A', data: tempData.sensorsA, borderColor: '#0072B2', backgroundColor: '#0072B2', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor B', data: tempData.sensorsB, borderColor: '#E69F00', backgroundColor: '#E69F00', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor C', data: tempData.sensorsC, borderColor: '#CC79A7', backgroundColor: '#CC79A7', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor D', data: tempData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Threshold', data: Array(tempData.labels.length).fill(threshold), borderColor: 'black', borderDash: [5,5], pointRadius: 0},"));
   client.println(F("        {label: 'High Threshold', data: Array(tempData.labels.length).fill(threshold + margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0},"));
   client.println(F("        {label: 'Low Threshold', data: Array(tempData.labels.length).fill(threshold - margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0}"));
@@ -537,12 +577,9 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      layout: { padding: { left: 10, right: 20 } },"));
   client.println(F("      scales: {"));
   client.println(F("        x: {"));
-  client.println(F("          ticks: {"));
-  client.println(F("            maxRotation: 45,"));
-  client.println(F("            minRotation: 45,"));
-  client.println(F("            maxTicksLimit: 24,"));
-  client.println(F("            font: { size: 10 }"));
-  client.println(F("          }"));
+  client.println(F("          type: 'time',"));
+  client.println(F("          time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: 'h:mm a', minute: 'h:mm a', day: 'MMM d' } },"));
+  client.println(F("          ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }"));
   client.println(F("        },"));
   client.println(F("        y: {"));
   client.println(F("          title: { display: true, text: 'Celsius (°C)', font: { size: 13 } },"));
@@ -574,10 +611,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    data: {"));
   client.println(F("      labels: humidData.labels,"));
   client.println(F("      datasets: ["));
-  client.println(F("        {label: 'Sensor A', data: humidData.sensorsA, borderColor: 'red', backgroundColor: 'red', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor B', data: humidData.sensorsB, borderColor: 'blue', backgroundColor: 'blue', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor C', data: humidData.sensorsC, borderColor: 'green', backgroundColor: 'green', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: 'orange', backgroundColor: 'orange', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4}"));
+  client.println(F("        {label: 'Sensor A', data: humidData.sensorsA, borderColor: '#0072B2', backgroundColor: '#0072B2', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor B', data: humidData.sensorsB, borderColor: '#E69F00', backgroundColor: '#E69F00', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor C', data: humidData.sensorsC, borderColor: '#CC79A7', backgroundColor: '#CC79A7', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4}"));
   client.println(F("      ]"));
   client.println(F("    },"));
   client.println(F("    options: {"));
@@ -585,7 +622,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      maintainAspectRatio: false,"));
   client.println(F("      layout: { padding: { left: 10, right: 20 } },"));
   client.println(F("      scales: {"));
-  client.println(F("        x: { ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } } },"));
+  client.println(F("        x: {"));
+  client.println(F("          type: 'time',"));
+  client.println(F("          time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: 'h:mm a', minute: 'h:mm a', day: 'MMM d' } },"));
+  client.println(F("          ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }"));
+  client.println(F("        },"));
   client.println(F("        y: { title: { display: true, text: 'Humidity (%)', font: { size: 13 } }, ticks: { stepSize: 1.0 } }"));
   client.println(F("      },"));
   client.println(F("      interaction: { mode: 'index', intersect: false },"));
@@ -622,7 +663,7 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("async function pollSysInfo() {"));
   client.println(F("  try {"));
-  client.println(F("    const res = await fetch('/sysinfo');"));
+  client.println(F("    const res = await fetch('/sysinfo?t=' + new Date().getTime());"));
   client.println(F("    const text = await res.text();"));
   client.println(F("    const pairs = {};"));
   client.println(F("    text.trim().split(',').forEach(p => {"));
@@ -634,13 +675,13 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    const ramEl = document.getElementById('sysRam');"));
   client.println(F("    if (ramEl) ramEl.innerHTML = 'RAM: <span style=\"color:' + ramColor + '; font-weight:bold;\">' + (ram/1024).toFixed(1) + ' KB</span>';"));
   client.println(F("    const upEl = document.getElementById('sysUptime');"));
-  client.println(F("    if (upEl) upEl.textContent = 'Uptime: ' + (pairs['UPTIME'] || '--');"));
+  client.println(F("    if (upEl) upEl.innerHTML = '&#9201; Uptime: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['UPTIME'] || '--') + '</span>';"));
   client.println(F("    const sdEl = document.getElementById('sysSd');"));
   client.println(F("    if (sdEl) { sdEl.textContent = 'SD: ' + (pairs['SD'] || '--'); sdEl.style.color = pairs['SD']==='OK' ? '#27ae60' : '#e74c3c'; }"));
   client.println(F("    const wrEl = document.getElementById('sysWrite');"));
-  client.println(F("    if (wrEl) wrEl.textContent = 'Last Write: ' + (pairs['LASTWRITE'] || '--');"));
+  client.println(F("    if (wrEl) wrEl.innerHTML = '&#128221; Last Write: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['LASTWRITE'] || '--') + '</span>';"));
   client.println(F("    const ntpEl = document.getElementById('sysNtp');"));
-  client.println(F("    if (ntpEl) ntpEl.textContent = 'NTP Sync: ' + (pairs['NTPSYNC'] || '--');"));
+  client.println(F("    if (ntpEl) ntpEl.innerHTML = '&#128336; NTP Sync: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['NTPSYNC'] || '--') + '</span>';"));
   client.println(F("  } catch(e) {}"));
   client.println(F("}"));
 

@@ -5,8 +5,6 @@
 #include "display.h"
 #include "storage.h"
 
-// Notice: lastNtpEpoch has been removed from here to fix the linker error!
-
 void setup() {
   Serial.begin(115200);
   while (!Serial);
@@ -66,7 +64,6 @@ void setup() {
   Udp.begin(UDP_LOCAL_PORT);
   requestNtpTime();
   lastNtpCheck = millis();
-  lastNtpEpoch = currentEpoch; 
 
   initSDCard();
   lastDisplaySwitch = millis();
@@ -75,10 +72,13 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
-  static unsigned long lastEpochUpdate = 0;
-  if (now - lastEpochUpdate >= 1000) {
+  static unsigned long lastEpochUpdate = millis();
+  
+  // FIX 1: The Catch-Up Loop. If the Arduino gets busy serving a webpage, 
+  // this ensures currentEpoch quickly catches up and never drifts behind real time.
+  while (now - lastEpochUpdate >= 1000) {
     currentEpoch++;
-    lastEpochUpdate = now;
+    lastEpochUpdate += 1000;
   }
 
   handleButtonPress();
@@ -90,16 +90,33 @@ void loop() {
   if (millis() - lastNtpCheck >= NTP_INTERVAL) {
     requestNtpTime();
     lastNtpCheck = millis();
-    lastNtpEpoch = currentEpoch; 
   }
 
-  // Write to SD Card
-  if (millis() - lastCsvWrite >= CSV_WRITE_INTERVAL) {
-    appendCsvData();
-    lastCsvWrite = millis();
+  // --- FIX 2: Bulletproof Time-Aligned Logging ---
+  static unsigned long nextLogEpoch = 0;
+
+  // Check if we have a valid internet time (Epoch > 1 Billion ensures year is > 2001)
+  if (currentEpoch > 1000000000UL) { 
+    if (nextLogEpoch == 0) {
+      // Calculate the exact epoch time for the NEXT 5-minute boundary
+      nextLogEpoch = currentEpoch + (300 - (currentEpoch % 300));
+    }
+
+    // Using >= ensures we NEVER miss a log, even if the loop was delayed by a web request
+    if (currentEpoch >= nextLogEpoch) {
+      appendCsvData();
+      lastCsvWrite = millis();
+      nextLogEpoch += 300; // Set target for exactly 5 minutes later
+    }
+  } else {
+    // Fallback if the internet is down on boot
+    if (millis() - lastCsvWrite >= CSV_WRITE_INTERVAL) {
+      appendCsvData();
+      lastCsvWrite = millis();
+    }
   }
 
-  // Socket Cleanup (Helps prevent Connection Refused errors)
+  // Socket Cleanup
   static unsigned long lastCleanup = 0;
   if (millis() - lastCleanup > 30000) {
     cleanupStaleConnections();
@@ -116,22 +133,20 @@ void loop() {
     }
 
     bool currentLineIsBlank = true;
-    bool isFirstLine = true; // Memory fix: Track if we are reading the first line
+    bool isFirstLine = true; 
     
     String httpRequest = "";
-    httpRequest.reserve(64); // Memory fix: Pre-allocate 64 bytes to prevent heap fragmentation
+    httpRequest.reserve(64); 
 
     while (client.connected()) {
       if (client.available()) {
         char c = client.read();
         
-        // Memory fix: Only save the character if it's the first line AND we haven't exceeded our buffer
         if (isFirstLine && httpRequest.length() < 60 && c != '\r' && c != '\n') {
           httpRequest += c;
         }
 
         if (c == '\n' && currentLineIsBlank) {
-          // Route Handling
           if (httpRequest.startsWith("GET /threshold")) serveThreshold(client);
           else if (httpRequest.startsWith("GET /status")) serveStatus(client);
           else if (httpRequest.startsWith("GET /sysinfo")) serveSystemInfo(client);
@@ -146,7 +161,7 @@ void loop() {
         
         if (c == '\n') {
           currentLineIsBlank = true;
-          isFirstLine = false; // We hit the first newline, stop saving junk to httpRequest
+          isFirstLine = false; 
         }
         else if (c != '\r') {
           currentLineIsBlank = false;
