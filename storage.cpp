@@ -322,18 +322,23 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='humidChart'></canvas></div></div>"));
 
+  // --- UPGRADED: 6-MONTH DATE RANGE ARCHIVE TAB ---
   client.println(F("<div id='archive' class='tab-content'>"));
   client.println(F("  <div style='background:#fff; padding:20px; border-radius:6px; border:1px solid #ddd; margin-top:10px;'>"));
-  client.println(F("    <h3 style='margin-top:0;'>Download Historical Data</h3>"));
-  client.println(F("    <p>Select a date below to download a full 24-hour CSV file. Data is strictly retained for 180 days.</p>"));
-  client.println(F("    <label>Select Date: <input type='date' id='archiveDate' style='padding:6px; font-size:14px;'></label><br><br>"));
-  client.println(F("    <label>Data Type: <select id='archiveType' style='padding:6px; font-size:14px;'><option value='T'>Temperature</option><option value='H'>Humidity</option></select></label><br><br>"));
-  client.println(F("    <button onclick='downloadArchive()' style='padding:10px 16px; font-weight:bold; background:#2980b9; color:white; border:none; border-radius:4px;'>Download Archive CSV</button>"));
+  client.println(F("    <h3 style='margin-top:0;'>Download Historical Data Range (Up to 6 Months)</h3>"));
+  client.println(F("    <p>Select a date range to generate a combined CSV report. Data is strictly retained for 180 days.</p>"));
+  client.println(F("    <label><b>From:</b> <input type='date' id='startDate' style='padding:6px; border:1px solid #ccc; border-radius:4px;'></label>"));
+  client.println(F("    <label style='margin-left: 15px;'><b>To:</b> <input type='date' id='endDate' style='padding:6px; border:1px solid #ccc; border-radius:4px;'></label><br><br>"));
+  client.println(F("    <label><b>Data Type:</b> <select id='dataType' style='padding:6px; border:1px solid #ccc; border-radius:4px;'><option value='T'>Temperature</option><option value='H'>Humidity</option></select></label><br><br>"));
+  client.println(F("    <button id='dlButton' onclick='downloadDateRange()' style='padding:10px 16px; font-weight:bold; background:#2980b9; color:white; border:none; border-radius:4px; cursor:pointer;'>Download Combined CSV</button>"));
+  client.println(F("    <span id='dlProgress' style='margin-left: 10px; font-weight: bold; color: #27ae60;'></span>"));
   client.println(F("  </div>"));
   client.println(F("</div>"));
 
+  // --- UPGRADED: ADDED SAFE EJECT TO SYSTEM STATUS ---
   client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
-  client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;'>System Status</div>"));
+  client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;display:flex;justify-content:space-between;'><span>System Status</span>"));
+  client.println(F("<button onclick='safeEject()' style='background:#e74c3c; color:white; border:none; padding:4px 8px; border-radius:4px; font-weight:bold; cursor:pointer;'>Prepare SD for Removal / Halt</button></div>"));
   client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;'>"));
   client.println(F("<span id='sysRam'>RAM: --</span> <span id='sysUptime'>&#9201; Uptime: --</span> <span id='sysSd'>&#128190; SD: --</span>"));
   client.println(F("</div><div style='display:flex;flex-wrap:wrap;gap:20px;margin-top:6px;'>"));
@@ -355,23 +360,56 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  link.download = label + '_chart.png'; link.href = chart.toBase64Image(); link.click();"));
   client.println(F("}"));
 
-  client.println(F("async function downloadArchive() {"));
-  client.println(F("  const dateInput = document.getElementById('archiveDate').value;"));
-  client.println(F("  if (!dateInput) { alert('Please select a date from the calendar first.'); return; }"));
-  client.println(F("  const selectedDate = new Date(dateInput + 'T12:00:00'); const now = new Date();"));
-  client.println(F("  const diffDays = (now - selectedDate) / (1000 * 60 * 60 * 24);"));
-  client.println(F("  if (diffDays > 180 || diffDays < 0) { alert('Sorry, data is only stored for 6 months.'); return; }"));
-  client.println(F("  const y = selectedDate.getFullYear().toString().slice(-2);"));
-  client.println(F("  let m = (selectedDate.getMonth() + 1).toString(); if (m.length < 2) m = '0' + m;"));
-  client.println(F("  let d = selectedDate.getDate().toString(); if (d.length < 2) d = '0' + d;"));
-  client.println(F("  const type = document.getElementById('archiveType').value;"));
-  client.println(F("  const filename = y + m + d + '_' + type + '.csv';"));
-  client.println(F("  try {"));
-  client.println(F("    const res = await fetch('/archive?file=' + filename);"));
-  client.println(F("    if (!res.ok) { alert('Sorry, data for this date has been archived or purged.'); }"));
-  client.println(F("    else { window.location = '/archive?file=' + filename; }"));
-  client.println(F("  } catch(e) { alert('Network error trying to fetch the file.'); }"));
+  // --- UPGRADED: NEW MULTI-DAY STITCHING JS ---
+  client.println(F("async function downloadDateRange() {"));
+  client.println(F("  const startDate = document.getElementById('startDate').value;"));
+  client.println(F("  const endDate = document.getElementById('endDate').value;"));
+  client.println(F("  const dataType = document.getElementById('dataType').value;"));
+  client.println(F("  const btn = document.getElementById('dlButton');"));
+  client.println(F("  const progress = document.getElementById('dlProgress');"));
+  client.println(F("  if (!startDate || !endDate) { alert('Please select both a Start and End date.'); return; }"));
+  client.println(F("  const d1 = new Date(startDate + 'T12:00:00');"));
+  client.println(F("  const d2 = new Date(endDate + 'T12:00:00');"));
+  client.println(F("  if (d1 > d2) { alert('Start date must be BEFORE the End date.'); return; }"));
+  client.println(F("  const diffDays = Math.round((d2 - d1) / 86400000);"));
+  client.println(F("  if (diffDays > 180) { alert('You can only download up to 6 months (180 days) of data at a time.'); return; }"));
+  
+  client.println(F("  btn.disabled = true; btn.style.backgroundColor = '#95a5a6';"));
+  client.println(F("  let combinedCsv = 'Date,Time,Sensor A,Sensor B,Sensor C,Sensor D\\n';"));
+  client.println(F("  let filesFound = 0;"));
+  
+  client.println(F("  for (let i = 0; i <= diffDays; i++) {"));
+  client.println(F("    let curr = new Date(d1.getTime() + (i * 86400000));"));
+  client.println(F("    let y = curr.getFullYear().toString().slice(-2);"));
+  client.println(F("    let m = (curr.getMonth() + 1).toString().padStart(2, '0');"));
+  client.println(F("    let d = curr.getDate().toString().padStart(2, '0');"));
+  client.println(F("    let filename = y + m + d + '_' + dataType + '.csv';"));
+  client.println(F("    progress.innerText = 'Fetching day ' + (i + 1) + ' of ' + (diffDays + 1) + '...';"));
+  
+  client.println(F("    try {"));
+  client.println(F("      let res = await fetch('/archive?file=' + filename);"));
+  client.println(F("      if (res.ok) {"));
+  client.println(F("        let text = await res.text();"));
+  client.println(F("        let lines = text.trim().split('\\n');"));
+  client.println(F("        if (lines.length > 1) { combinedCsv += lines.slice(1).join('\\n') + '\\n'; filesFound++; }"));
+  client.println(F("      }"));
+  client.println(F("    } catch(e) { console.log('Skipped missing file: ' + filename); }"));
+  client.println(F("    await new Promise(resolve => setTimeout(resolve, 100));")); // 100ms pause to protect Arduino RAM
+  client.println(F("  }"));
+  
+  client.println(F("  btn.disabled = false; btn.style.backgroundColor = '#2980b9';"));
+  client.println(F("  progress.innerText = 'Done!'; setTimeout(() => progress.innerText = '', 3000);"));
+  client.println(F("  if (filesFound === 0) { alert('No data found for this range.'); return; }"));
+  client.println(F("  const blob = new Blob([combinedCsv], { type: 'text/csv' });"));
+  client.println(F("  const url = window.URL.createObjectURL(blob);"));
+  client.println(F("  const a = document.createElement('a'); a.setAttribute('href', url);"));
+  client.println(F("  a.setAttribute('download', 'AgingRoom_' + dataType + '_' + startDate + '_to_' + endDate + '.csv');"));
+  client.println(F("  a.click(); window.URL.revokeObjectURL(url);"));
   client.println(F("}"));
+
+  // --- UPGRADED: SAFE EJECT JS ---
+  client.println(F("async function safeEject() { if(confirm('STOP LOGGING AND UNMOUNT SD CARD?\\nYou MUST physically unplug and reboot the Arduino to resume logging.')) { try { await fetch('/eject'); document.body.innerHTML = '<div style=\"text-align:center;margin-top:100px;\"><h1 style=\"color:#e74c3c;\">System Halted Safely</h1><p>The SD card has been unmounted.</p><p>You may now safely unplug the power.</p></div>'; } catch(e) { alert('Command sent.'); } } }"));
+
 
   client.println(F("const sensorMap = { 'A':{idClass:'s-a', color:'#0072B2'}, 'B':{idClass:'s-b', color:'#E69F00'}, 'C':{idClass:'s-c', color:'#CC79A7'}, 'D':{idClass:'s-d', color:'#56B4E9'} };"));
 
