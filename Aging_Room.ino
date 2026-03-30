@@ -4,7 +4,7 @@
 #include "sensors.h"
 #include "display.h"
 #include "storage.h"
-#include <avr/wdt.h> // <-- Hardware Watchdog Library
+#include <avr/wdt.h>
 
 void setup() {
   Serial.begin(115200);
@@ -76,7 +76,7 @@ void setup() {
 }
 
 void loop() {
-  wdt_reset(); // <-- PET THE DOG! (Resets the 8-second crash timer)
+  wdt_reset(); // Pet the dog!
 
   unsigned long now = millis();
   static unsigned long lastEpochUpdate = millis();
@@ -86,8 +86,7 @@ void loop() {
     lastEpochUpdate += 1000;
   }
 
-  // --- NEW: DEFERRED TIMESTAMPTED LOGGING ---
-  // Wait until NTP fetches the correct time, then write the boot log!
+  // --- DEFERRED TIMESTAMPTED LOGGING ---
   static bool bootLogged = false;
   if (!bootLogged && currentEpoch > 1000000000UL) {
     File alertFile = SD.open("EVENTS.txt", FILE_WRITE);
@@ -99,7 +98,7 @@ void loop() {
       alertFile.println(timeBuf);
       alertFile.close();
     }
-    bootLogged = true; // Never run this again until the next reboot
+    bootLogged = true;
   }
 
   handleButtonPress();
@@ -121,7 +120,6 @@ void loop() {
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
     
-    // If exactly midnight and not yet purged today
     if (h == 0 && mi == 0 && d != lastPurgeDay) {
       purgeOldLogs();
       lastPurgeDay = d; 
@@ -168,7 +166,7 @@ void loop() {
     httpRequest.reserve(64); 
 
     while (client.connected()) {
-      wdt_reset(); // Pet the dog while keeping the browser connection open
+      wdt_reset(); // Pet the dog while serving web requests
 
       if (client.available()) {
         char c = client.read();
@@ -185,15 +183,12 @@ void loop() {
           else if (httpRequest.startsWith("GET /temp.csv")) serveFile(client, "temp.csv", "text/csv");
           else if (httpRequest.startsWith("GET /humid.csv")) serveFile(client, "humid.csv", "text/csv");
 
-          // --- Watchdog Endpoints ---
+          // Watchdog Endpoints
           else if (httpRequest.startsWith("GET /events")) serveFile(client, "EVENTS.txt", "text/plain");
-          
-          // --- NEW: Clear Alerts Endpoint ---
           else if (httpRequest.startsWith("GET /clear-events")) {
             SD.remove("EVENTS.txt");
             client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nAlerts Cleared!");
           }
-
           else if (httpRequest.startsWith("GET /eject")) {
             client.println("HTTP/1.1 200 OK\nConnection: close\n");
             SD.end();
@@ -201,7 +196,7 @@ void loop() {
             while(1) { digitalWrite(RED_LED_PIN, HIGH); delay(200); digitalWrite(RED_LED_PIN, LOW); delay(200); wdt_reset(); }
           }
           
-          // --- The Archive File Fetcher ---
+          // Archive Fetcher
           else if (httpRequest.startsWith("GET /archive?file=")) {
             int startIdx = 18;
             int endIdx = httpRequest.indexOf(' ', startIdx);
