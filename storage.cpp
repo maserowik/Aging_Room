@@ -2,6 +2,7 @@
 #include "network.h"
 #include "sensors.h"
 #include "display.h"
+#include <avr/wdt.h>  // <-- Include the Watchdog library
 
 extern LiquidCrystal_I2C lcd;
 
@@ -24,6 +25,7 @@ void initSDCard() {
       delay(500);
       digitalWrite(RED_LED_PIN, LOW);
       delay(500);
+      wdt_reset(); // Prevent watchdog reboot if stuck in this failure loop
     }
   } else {
     Serial.println("SD card initialized.");
@@ -49,7 +51,6 @@ void appendCsvData() {
   int year, month, day, hour, minute, second, weekday;
   epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
 
-  // New YYMMDD Format for 6-month retention
   char tFile[13]; snprintf(tFile, sizeof(tFile), "%02d%02d%02d_T.csv", year % 100, month + 1, day);
   char hFile[13]; snprintf(hFile, sizeof(hFile), "%02d%02d%02d_H.csv", year % 100, month + 1, day);
 
@@ -92,7 +93,6 @@ void purgeOldLogs() {
   extern unsigned long currentEpoch;
   if (currentEpoch < 1000000000UL) return; 
 
-  // Calculate exactly 180 days ago
   unsigned long purgeEpoch = currentEpoch - (180UL * 86400UL); 
   int y, mo, d, h, mi, s, wd;
   epochToDateTime(purgeEpoch, y, mo, d, h, mi, s, wd);
@@ -105,7 +105,6 @@ void purgeOldLogs() {
 }
 
 void serveFile(EthernetClient &client, const char *filename, const char *contentType) {
-  // Live Graph Dynamic 7-Day Stitcher
   if (strcmp(filename, "temp.csv") == 0 || strcmp(filename, "humid.csv") == 0) {
     bool isTemp = (strcmp(filename, "temp.csv") == 0);
 
@@ -121,7 +120,6 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
 
     extern unsigned long currentEpoch;
     
-    // Stream chronologically: 6 days ago up to today
     for (int i = 6; i >= 0; i--) {
       unsigned long targetEpoch = currentEpoch - (i * 86400UL);
       int y, mo, d, h, mi, s, wd;
@@ -134,8 +132,11 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
       if (SD.exists(fn)) {
         File f = SD.open(fn, FILE_READ);
         if (f) {
-          while(f.available()) { if (f.read() == '\n') break; } // Skip header
-          while(f.available()) { client.write(f.read()); }
+          while(f.available()) { wdt_reset(); if (f.read() == '\n') break; } // Skip header safely
+          while(f.available()) { 
+            client.write(f.read()); 
+            wdt_reset(); // <-- Pet the dog during Chart data generation
+          }
           f.close();
         }
       }
@@ -143,14 +144,16 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
     return;
   }
 
-  // Fallback for files like favicon (if added later)
   if (SD.exists(filename)) {
     File file = SD.open(filename, FILE_READ);
     client.println("HTTP/1.1 200 OK");
     client.print("Content-Type: ");
     client.println(contentType);
     client.println("Connection: close\n");
-    while (file.available()) { client.write(file.read()); }
+    while (file.available()) { 
+      client.write(file.read()); 
+      wdt_reset(); // <-- Pet the dog while sending files like EVENTS.txt
+    }
     file.close();
   } else {
     client.println("HTTP/1.1 404 Not Found\nConnection: close\n");
@@ -322,7 +325,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='humidChart'></canvas></div></div>"));
 
-  // --- UPGRADED: 6-MONTH DATE RANGE ARCHIVE TAB ---
   client.println(F("<div id='archive' class='tab-content'>"));
   client.println(F("  <div style='background:#fff; padding:20px; border-radius:6px; border:1px solid #ddd; margin-top:10px;'>"));
   client.println(F("    <h3 style='margin-top:0;'>Download Historical Data Range (Up to 6 Months)</h3>"));
@@ -335,7 +337,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  </div>"));
   client.println(F("</div>"));
 
-  // --- UPGRADED: ADDED SAFE EJECT TO SYSTEM STATUS ---
   client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
   client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;display:flex;justify-content:space-between;'><span>System Status</span>"));
   client.println(F("<button onclick='safeEject()' style='background:#e74c3c; color:white; border:none; padding:4px 8px; border-radius:4px; font-weight:bold; cursor:pointer;'>Prepare SD for Removal / Halt</button></div>"));
@@ -344,6 +345,14 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("</div><div style='display:flex;flex-wrap:wrap;gap:20px;margin-top:6px;'>"));
   client.println(F("<span id='sysWrite'>&#128221; Last Write: --</span> <span id='sysNtp'>&#128336; NTP Sync: --</span>"));
   client.println(F("</div></div>"));
+
+  // --- NEW ALERTS PANEL WITH CLEAR BUTTON ---
+  client.println(F("<div id='alertsPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #f5c6cb;background-color:#f8d7da;font-size:14px;'>"));
+  client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;color:#721c24;display:flex;justify-content:space-between;align-items:center;'>"));
+  client.println(F("<span>&#9888;&#65039; Recent Watchdog Alerts</span>"));
+  client.println(F("<button onclick='clearEvents()' style='background:#dc3545;color:white;border:none;padding:4px 10px;border-radius:4px;font-weight:bold;cursor:pointer;font-size:13px;'>Clear Alerts</button></div>"));
+  client.println(F("<ul id='eventList' style='margin:0; padding-left:20px; color:#721c24; font-family:monospace;'><li>Loading alerts...</li></ul>"));
+  client.println(F("</div>"));
 
   client.println(F("<script>"));
   client.println(F("let tempChart, humidChart;"));
@@ -360,7 +369,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  link.download = label + '_chart.png'; link.href = chart.toBase64Image(); link.click();"));
   client.println(F("}"));
 
-  // --- UPGRADED: NEW MULTI-DAY STITCHING JS ---
   client.println(F("async function downloadDateRange() {"));
   client.println(F("  const startDate = document.getElementById('startDate').value;"));
   client.println(F("  const endDate = document.getElementById('endDate').value;"));
@@ -394,7 +402,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        if (lines.length > 1) { combinedCsv += lines.slice(1).join('\\n') + '\\n'; filesFound++; }"));
   client.println(F("      }"));
   client.println(F("    } catch(e) { console.log('Skipped missing file: ' + filename); }"));
-  client.println(F("    await new Promise(resolve => setTimeout(resolve, 100));")); // 100ms pause to protect Arduino RAM
+  client.println(F("    await new Promise(resolve => setTimeout(resolve, 100));")); 
   client.println(F("  }"));
   
   client.println(F("  btn.disabled = false; btn.style.backgroundColor = '#2980b9';"));
@@ -407,9 +415,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  a.click(); window.URL.revokeObjectURL(url);"));
   client.println(F("}"));
 
-  // --- UPGRADED: SAFE EJECT JS ---
   client.println(F("async function safeEject() { if(confirm('STOP LOGGING AND UNMOUNT SD CARD?\\nYou MUST physically unplug and reboot the Arduino to resume logging.')) { try { await fetch('/eject'); document.body.innerHTML = '<div style=\"text-align:center;margin-top:100px;\"><h1 style=\"color:#e74c3c;\">System Halted Safely</h1><p>The SD card has been unmounted.</p><p>You may now safely unplug the power.</p></div>'; } catch(e) { alert('Command sent.'); } } }"));
-
 
   client.println(F("const sensorMap = { 'A':{idClass:'s-a', color:'#0072B2'}, 'B':{idClass:'s-b', color:'#E69F00'}, 'C':{idClass:'s-c', color:'#CC79A7'}, 'D':{idClass:'s-d', color:'#56B4E9'} };"));
 
@@ -514,6 +520,11 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("async function pollSysInfo() { try { const res = await fetch('/sysinfo?t=' + new Date().getTime()); const text = await res.text(); const pairs = {}; text.trim().split(',').forEach(p => { const i = p.indexOf(':'); if (i !== -1) pairs[p.substring(0,i).trim()] = p.substring(i+1).trim(); }); const ram = parseInt(pairs['RAM'] || 0); const ramColor = ram > 2000 ? '#2ecc71' : ram > 1000 ? '#f39c12' : '#e74c3c'; const ramEl = document.getElementById('sysRam'); if (ramEl) ramEl.innerHTML = 'RAM: <span style=\"color:' + ramColor + '; font-weight:bold;\">' + (ram/1024).toFixed(1) + ' KB</span>'; const upEl = document.getElementById('sysUptime'); if (upEl) upEl.innerHTML = '&#9201; Uptime: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['UPTIME'] || '--') + '</span>'; const sdEl = document.getElementById('sysSd'); if (sdEl) { sdEl.textContent = 'SD: ' + (pairs['SD'] || '--'); sdEl.style.color = pairs['SD']==='OK' ? '#27ae60' : '#e74c3c'; } const wrEl = document.getElementById('sysWrite'); if (wrEl) wrEl.innerHTML = '&#128221; Last Write: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['LASTWRITE'] || '--') + '</span>'; const ntpEl = document.getElementById('sysNtp'); if (ntpEl) ntpEl.innerHTML = '&#128336; NTP Sync: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['NTPSYNC'] || '--') + '</span>'; } catch(e) {} }"));
   client.println(F("function updateLastUpdate() { document.getElementById('lastUpdate').textContent = new Date().toLocaleString(); }"));
+
+  // --- NEW ALERTS JAVASCRIPT WITH CLEAR FUNCTION ---
+  client.println(F("async function clearEvents() { if (confirm('Clear alert history?')) { try { await fetch('/clear-events'); document.getElementById('eventList').innerHTML = '<li>No recent alerts.</li>'; } catch(e) { alert('Failed to clear alerts.'); } } }"));
+  client.println(F("async function pollEvents() { try { let res = await fetch('/events?t=' + new Date().getTime()); if (res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) {} }"));
+  client.println(F("pollEvents(); setInterval(pollEvents, 60000);"));
 
   client.println(F("</script></body></html>"));
 }

@@ -1,5 +1,6 @@
 #include "sensors.h"
 #include "display.h"
+#include <avr/wdt.h>  // <-- NEW: Include Watchdog library
 
 // Global sensor objects
 DHT dhtA(40, DHTTYPE);
@@ -108,6 +109,7 @@ void handleButtonPress() {
 
     // Wait for 5 second hold or release
     while (digitalRead(BUTTON_PIN) == LOW) {
+      wdt_reset(); // <-- NEW: Pet dog during initial 5-second hold
       digitalWrite(RED_LED_PIN, (millis() / 250) % 2);
       digitalWrite(GREEN_LED_PIN, !((millis() / 250) % 2));
       if (millis() - holdStart >= 5000) break;
@@ -122,6 +124,7 @@ void handleButtonPress() {
 
       // Flash green 10 times to confirm entry
       for (int i = 0; i < 10; i++) {
+        wdt_reset(); // <-- NEW: Pet dog during 5-second LED flash
         digitalWrite(GREEN_LED_PIN, HIGH);
         digitalWrite(RED_LED_PIN, LOW);
         delay(250);
@@ -131,6 +134,8 @@ void handleButtonPress() {
 
       // Adjustment loop — keep holding to scroll, release to save
       while (digitalRead(BUTTON_PIN) == LOW) {
+        wdt_reset(); // <-- NEW: Pet dog while user holds button to change temps
+        
         if (millis() - lastBlinkToggle >= 250) {
           blinkState = !blinkState;
           lastBlinkToggle = millis();
@@ -171,6 +176,7 @@ void handleButtonPress() {
 
       // Flash red 10 times to confirm save
       for (int i = 0; i < 10; i++) {
+        wdt_reset(); // <-- NEW: Pet dog during 5-second red flash
         digitalWrite(RED_LED_PIN, HIGH);
         digitalWrite(GREEN_LED_PIN, LOW);
         delay(250);
@@ -181,6 +187,7 @@ void handleButtonPress() {
       // Show old vs new for 10 seconds
       lcd.clear();
       for (int i = 0; i < 20; i++) {
+        wdt_reset(); // <-- NEW: Pet dog during 10-second success screen
         lcd.setCursor(0, 0);
         lcd.print("Threshold Updated ");
         lcd.setCursor(0, 2);

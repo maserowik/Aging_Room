@@ -4,6 +4,7 @@
 #include "sensors.h"
 #include "display.h"
 #include "storage.h"
+#include <avr/wdt.h> // <-- Hardware Watchdog Library
 
 void setup() {
   Serial.begin(115200);
@@ -68,9 +69,15 @@ void setup() {
   initSDCard();
   lastDisplaySwitch = millis();
   server.begin();
+
+  // Arm the Watchdog!
+  wdt_enable(WDTO_8S); 
+  Serial.println("Watchdog Timer Armed (8 Seconds)");
 }
 
 void loop() {
+  wdt_reset(); // <-- PET THE DOG! (Resets the 8-second crash timer)
+
   unsigned long now = millis();
   static unsigned long lastEpochUpdate = millis();
   
@@ -79,13 +86,32 @@ void loop() {
     lastEpochUpdate += 1000;
   }
 
+  // --- NEW: DEFERRED TIMESTAMPTED LOGGING ---
+  // Wait until NTP fetches the correct time, then write the boot log!
+  static bool bootLogged = false;
+  if (!bootLogged && currentEpoch > 1000000000UL) {
+    File alertFile = SD.open("EVENTS.txt", FILE_WRITE);
+    if (alertFile) {
+      int y, mo, d, h, mi, s, wd;
+      epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
+      char timeBuf[64];
+      snprintf(timeBuf, sizeof(timeBuf), "%04d-%02d-%02d %02d:%02d:%02d - Watchdog Recovery Restart", y, mo + 1, d, h, mi, s);
+      alertFile.println(timeBuf);
+      alertFile.close();
+    }
+    bootLogged = true; // Never run this again until the next reboot
+  }
+
   handleButtonPress();
   readSensors();
   updateLEDs();
   updateDisplay();
   
+  // Muzzle the dog before checking NTP
   if (millis() - lastNtpCheck >= NTP_INTERVAL) {
-    requestNtpTime();
+    wdt_disable();       
+    requestNtpTime();    
+    wdt_enable(WDTO_8S); 
     lastNtpCheck = millis();
   }
 
@@ -142,6 +168,8 @@ void loop() {
     httpRequest.reserve(64); 
 
     while (client.connected()) {
+      wdt_reset(); // Pet the dog while keeping the browser connection open
+
       if (client.available()) {
         char c = client.read();
         
@@ -156,6 +184,22 @@ void loop() {
           else if (httpRequest.startsWith("GET /sysinfo")) serveSystemInfo(client);
           else if (httpRequest.startsWith("GET /temp.csv")) serveFile(client, "temp.csv", "text/csv");
           else if (httpRequest.startsWith("GET /humid.csv")) serveFile(client, "humid.csv", "text/csv");
+
+          // --- Watchdog Endpoints ---
+          else if (httpRequest.startsWith("GET /events")) serveFile(client, "EVENTS.txt", "text/plain");
+          
+          // --- NEW: Clear Alerts Endpoint ---
+          else if (httpRequest.startsWith("GET /clear-events")) {
+            SD.remove("EVENTS.txt");
+            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nAlerts Cleared!");
+          }
+
+          else if (httpRequest.startsWith("GET /eject")) {
+            client.println("HTTP/1.1 200 OK\nConnection: close\n");
+            SD.end();
+            lcd.clear(); lcd.print("SD UNMOUNTED"); lcd.setCursor(0,1); lcd.print("SAFE TO UNPLUG");
+            while(1) { digitalWrite(RED_LED_PIN, HIGH); delay(200); digitalWrite(RED_LED_PIN, LOW); delay(200); wdt_reset(); }
+          }
           
           // --- The Archive File Fetcher ---
           else if (httpRequest.startsWith("GET /archive?file=")) {
@@ -163,7 +207,6 @@ void loop() {
             int endIdx = httpRequest.indexOf(' ', startIdx);
             if (endIdx != -1) {
               String fileName = httpRequest.substring(startIdx, endIdx);
-              // Serve specifically as a direct download attachment
               if (SD.exists(fileName.c_str())) {
                 File file = SD.open(fileName.c_str(), FILE_READ);
                 client.println("HTTP/1.1 200 OK");
@@ -172,7 +215,12 @@ void loop() {
                 client.print(fileName);
                 client.println("\"");
                 client.println("Connection: close\n");
-                while (file.available()) { client.write(file.read()); }
+                
+                while (file.available()) { 
+                  client.write(file.read()); 
+                  wdt_reset(); 
+                }
+                
                 file.close();
               } else {
                 client.println("HTTP/1.1 404 Not Found\nConnection: close\n");

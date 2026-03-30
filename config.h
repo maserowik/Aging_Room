@@ -18,8 +18,8 @@
 #define EEPROM_TEMP_THRESHOLD_ADDR 0
 
 // Threshold Configuration
-#define MIN_THRESHOLD          19
-#define MAX_THRESHOLD          50
+#define MIN_THRESHOLD          -40
+#define MAX_THRESHOLD          80
 #define DEFAULT_TEMP_THRESHOLD 42
 
 // Connection Limiting
