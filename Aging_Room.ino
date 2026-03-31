@@ -163,7 +163,10 @@ void loop() {
     bool currentLineIsBlank = true;
     bool isFirstLine = true; 
     String httpRequest = "";
+    String currentLine = "";  // <-- Used to read hidden headers
+    String authHeader = "";   // <-- Used to store the password line
     httpRequest.reserve(64); 
+    currentLine.reserve(120);
 
     while (client.connected()) {
       wdt_reset(); // Pet the dog while serving web requests
@@ -171,11 +174,33 @@ void loop() {
       if (client.available()) {
         char c = client.read();
         
+        // 1. Capture the actual web request (e.g., GET /temp.csv)
         if (isFirstLine && httpRequest.length() < 60 && c != '\r' && c != '\n') {
           httpRequest += c;
         }
 
+        // 2. Capture the hidden headers line-by-line
+        if (c != '\n' && c != '\r' && currentLine.length() < 120) {
+          currentLine += c;
+        }
+
+        // 3. When we hit a blank line, the request is fully received. Time to check the password!
         if (c == '\n' && currentLineIsBlank) {
+          
+          // ==========================================
+          // --- RESTORED: SHA256 AUTHENTICATION ---
+          // ==========================================
+          if (!checkAuth(authHeader + "\n")) {
+            
+            // If the SHA256 hash fails, slap them with a 401 Challenge!
+            client.println("HTTP/1.1 401 Unauthorized");
+            client.println("WWW-Authenticate: Basic realm=\"Seegrid Aging Room\"");
+            client.println("Content-Type: text/html");
+            client.println("Connection: close\n");
+            client.println("<h2>401 Unauthorized</h2><p>Valid Seegrid credentials required.</p>");
+            break; // Kick them out!
+          }
+          // ==========================================
           
           if (httpRequest.startsWith("GET /threshold")) serveThreshold(client);
           else if (httpRequest.startsWith("GET /status")) serveStatus(client);
@@ -235,7 +260,12 @@ void loop() {
           break;
         }
         
+        // 4. Save the Authorization header if we see it
         if (c == '\n') {
+          if (currentLine.startsWith("Authorization:")) {
+            authHeader = currentLine;
+          }
+          currentLine = ""; // Wipe the line clean to read the next one
           currentLineIsBlank = true;
           isFirstLine = false; 
         }

@@ -284,9 +284,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("</head><body>"));
 
   client.println(F("<h2>Seegrid Aging Room Data</h2>"));
-  client.print(F("<p>Last update: <span id='lastUpdate'>"));
+  client.println(F("<div style='margin-bottom: 20px; font-size: 14px; color: #555;'>"));
+  client.print(F("Last update: <strong id='lastUpdate' style='color: #000;'>"));
   client.print(lastUpdate);
-  client.println(F("</span></p>"));
+  client.println(F("</strong></div>"));
 
   client.println(F("<div id='statusBar'><strong>Sensors:</strong>"));
   const char* sensorLabels[] = {"A", "B", "C", "D"};
@@ -526,10 +527,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("async function clearEvents() { if (confirm('Clear alert history?')) { try { await fetch('/clear-events'); document.getElementById('eventList').innerHTML = '<li>No recent alerts.</li>'; } catch(e) { alert('Failed to clear alerts.'); } } }"));
   client.println(F("async function pollEvents() { try { let res = await fetch('/events?t=' + new Date().getTime()); if (res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) {} }"));
 
-  // --- NEW: BOOT SEQUENCE & STAGGERED TIMERS ---
-  client.println(F("document.getElementById('tempRange').addEventListener('change', updateCharts);"));
-  client.println(F("document.getElementById('humidRange').addEventListener('change', updateCharts);"));
-
+  // --- BOOT SEQUENCE & STAGGERED TIMERS ---
   client.println(F("async function bootUp() {"));
   client.println(F("  await updateCharts();")); // Wait for heavy charts first
   client.println(F("  await pollStatus();"));
