@@ -35,7 +35,7 @@ void initSDCard() {
 }
 
 void createCsvHeaderIfNeeded() {
-  // Legacy function kept to prevent errors
+  // Legacy function kept to prevent external reference errors
 }
 
 void ensureDailyHeader(const char* filename) {
@@ -366,6 +366,24 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("let tempChart, humidChart;"));
   client.print(F("let threshold = ")); client.print(tempThreshold, 1); client.println(F("; const margin = 5.0;"));
 
+  client.println(F("let isOffline = false;"));
+  client.println(F("const warnBanner = document.createElement('div');"));
+  client.println(F("warnBanner.style.cssText = 'display:none; background:#f1c40f; color:#856404; padding:15px; text-align:center; font-weight:bold; font-size:16px; position:fixed; top:0; left:0; width:100%; z-index:9999; box-shadow:0 4px 6px rgba(0,0,0,0.1);';"));
+  client.println(F("warnBanner.innerHTML = '&#9888;&#65039; SYSTEM OFFLINE: Connection lost. Auto-reconnecting...';"));
+  client.println(F("document.body.prepend(warnBanner);"));
+
+  client.println(F("function handleDisconnect() {"));
+  client.println(F("  if(isOffline) return; isOffline = true; warnBanner.style.display = 'block';"));
+  client.println(F("  setTimeout(checkReconnect, 4000);"));
+  client.println(F("}"));
+
+  client.println(F("async function checkReconnect() {"));
+  client.println(F("  try { let r = await fetch('/status?t=' + new Date().getTime());"));
+  client.println(F("    if(r.ok || r.status === 401) { isOffline = false; warnBanner.style.display = 'none'; pollStatus(); pollSysInfo(); }"));
+  client.println(F("    else setTimeout(checkReconnect, 4000);"));
+  client.println(F("  } catch(e) { setTimeout(checkReconnect, 4000); }"));
+  client.println(F("}"));
+
   client.println(F("function showTab(id, evt){"));
   client.println(F("  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));"));
   client.println(F("  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));"));
@@ -378,6 +396,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("}"));
 
   client.println(F("async function downloadDateRange() {"));
+  client.println(F("  if (isOffline) return;"));
   client.println(F("  const startDate = document.getElementById('startDate').value;"));
   client.println(F("  const endDate = document.getElementById('endDate').value;"));
   client.println(F("  const dataType = document.getElementById('dataType').value;"));
@@ -395,6 +414,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  let filesFound = 0;"));
   
   client.println(F("  for (let i = 0; i <= diffDays; i++) {"));
+  client.println(F("    if (isOffline) break;"));
   client.println(F("    let curr = new Date(d1.getTime() + (i * 86400000));"));
   client.println(F("    let y = curr.getFullYear().toString().slice(-2);"));
   client.println(F("    let m = (curr.getMonth() + 1).toString().padStart(2, '0');"));
@@ -403,8 +423,8 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    progress.innerText = 'Fetching day ' + (i + 1) + ' of ' + (diffDays + 1) + '...';"));
   
   client.println(F("    try {"));
-  client.println(F("      let res = await fetch('/archive?file=' + filename);"));
-  client.println(F("      if (res.ok) {"));
+  client.println(F("      let res = await safeFetch('/archive?file=' + filename);"));
+  client.println(F("      if (res && res.ok) {"));
   client.println(F("        let text = await res.text();"));
   client.println(F("        let lines = text.trim().split('\\n');"));
   client.println(F("        if (lines.length > 1) { combinedCsv += lines.slice(1).join('\\n') + '\\n'; filesFound++; }"));
@@ -423,7 +443,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  a.click(); window.URL.revokeObjectURL(url);"));
   client.println(F("}"));
 
-  client.println(F("async function safeEject() { if(confirm('STOP LOGGING AND UNMOUNT SD CARD?\\nYou MUST physically unplug and reboot the Arduino to resume logging.')) { try { await fetch('/eject'); document.body.innerHTML = '<div style=\"text-align:center;margin-top:100px;\"><h1 style=\"color:#e74c3c;\">System Halted Safely</h1><p>The SD card has been unmounted.</p><p>You may now safely unplug the power.</p></div>'; } catch(e) { alert('Command sent.'); } } }"));
+  client.println(F("async function safeEject() { if(confirm('STOP LOGGING AND UNMOUNT SD CARD?\\nYou MUST physically unplug and reboot the Arduino to resume logging.')) { try { await fetch('/eject'); document.body.innerHTML = '<div style=\"text-align:center;margin-top:100px;\"><h1 style=\"color:#e74c3c;\">System Halted Safely</h1><p>The SD card has been unmounted.</p><p>You may now safely unplug the power.</p></div>'; } catch(e) { handleDisconnect(); } } }"));
 
   client.println(F("const sensorMap = { 'A':{idClass:'s-a', color:'#0072B2'}, 'B':{idClass:'s-b', color:'#E69F00'}, 'C':{idClass:'s-c', color:'#CC79A7'}, 'D':{idClass:'s-d', color:'#56B4E9'} };"));
 
@@ -455,8 +475,21 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  }); if (tempChart) tempChart.update();"));
   client.println(F("}"));
 
+  client.println(F("async function safeFetch(url) {"));
+  client.println(F("  if (isOffline && !url.includes('/status')) return null;")); 
+  client.println(F("  try {"));
+  client.println(F("    let res = await fetch(url);"));
+  client.println(F("    if (!res.ok && res.status !== 404 && res.status !== 401) throw new Error('Bad Network');"));
+  client.println(F("    return res;"));
+  client.println(F("  } catch (e) {"));
+  client.println(F("    handleDisconnect();"));
+  client.println(F("    return null;"));
+  client.println(F("  }"));
+  client.println(F("}"));
+
   client.println(F("async function fetchData(filename, rangeDays) {"));
-  client.println(F("  let res = await fetch('/' + filename + '?t=' + new Date().getTime());"));
+  client.println(F("  let res = await safeFetch('/' + filename + '?t=' + new Date().getTime());"));
+  client.println(F("  if (!res || !res.ok) return {labels:[], sensorsA:[], sensorsB:[], sensorsC:[], sensorsD:[]};"));
   client.println(F("  let text = await res.text();"));
   client.println(F("  let lines = text.trim().split('\\n').slice(1);"));
   client.println(F("  let limit = new Date().getTime() - rangeDays * 86400000;"));
@@ -474,8 +507,9 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD};"));
   client.println(F("}"));
 
-  client.println(F("async function pollThreshold() { try { let res = await fetch('/threshold?t=' + new Date().getTime()); let val = parseFloat(await res.text()); if (!isNaN(val) && val !== threshold) { threshold = val; updateThresholdLines(); } } catch(e) {} }"));
-  client.println(F("async function pollStatus() { try { let res = await fetch('/status?t=' + new Date().getTime()); let text = await res.text(); updateStatusBar(text.trim().split(',')); } catch(e) {} }"));
+  client.println(F("async function pollThreshold() { if(isOffline) return; try { let res = await safeFetch('/threshold?t=' + new Date().getTime()); if(res){ let val = parseFloat(await res.text()); if (!isNaN(val) && val !== threshold) { threshold = val; updateThresholdLines(); } } } catch(e) { handleDisconnect(); } }"));
+  
+  client.println(F("async function pollStatus() { if(isOffline) return; try { let res = await safeFetch('/status?t=' + new Date().getTime()); if(res){ let text = await res.text(); updateStatusBar(text.trim().split(',')); } } catch(e) { handleDisconnect(); } }"));
 
   client.println(F("function updateThresholdLines() {"));
   client.println(F("  if (tempChart) {"));
@@ -488,10 +522,12 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("}"));
 
   client.println(F("async function updateCharts(){"));
+  client.println(F("  if (isOffline) return;"));
   client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value);"));
   client.println(F("  let rangeH = parseInt(document.getElementById('humidRange').value);"));
   client.println(F("  let tempData = await fetchData('temp.csv', rangeT);"));
   client.println(F("  let humidData = await fetchData('humid.csv', rangeH);"));
+  client.println(F("  if (tempData.labels.length === 0) return;")); 
 
   client.println(F("  if(tempChart) tempChart.destroy();"));
   client.println(F("  tempChart = new Chart(document.getElementById('tempChart'), {"));
@@ -521,30 +557,29 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  setTimeout(pollStatus, 500); updateLastUpdate();"));
   client.println(F("}"));
 
-  client.println(F("async function pollSysInfo() { try { const res = await fetch('/sysinfo?t=' + new Date().getTime()); const text = await res.text(); const pairs = {}; text.trim().split(',').forEach(p => { const i = p.indexOf(':'); if (i !== -1) pairs[p.substring(0,i).trim()] = p.substring(i+1).trim(); }); const ram = parseInt(pairs['RAM'] || 0); const ramColor = ram > 2000 ? '#2ecc71' : ram > 1000 ? '#f39c12' : '#e74c3c'; const ramEl = document.getElementById('sysRam'); if (ramEl) ramEl.innerHTML = 'RAM: <span style=\"color:' + ramColor + '; font-weight:bold;\">' + (ram/1024).toFixed(1) + ' KB</span>'; const upEl = document.getElementById('sysUptime'); if (upEl) upEl.innerHTML = '&#9201; Uptime: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['UPTIME'] || '--') + '</span>'; const sdEl = document.getElementById('sysSd'); if (sdEl) { sdEl.textContent = 'SD: ' + (pairs['SD'] || '--'); sdEl.style.color = pairs['SD']==='OK' ? '#27ae60' : '#e74c3c'; } const wrEl = document.getElementById('sysWrite'); if (wrEl) wrEl.innerHTML = '&#128221; Last Write: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['LASTWRITE'] || '--') + '</span>'; const ntpEl = document.getElementById('sysNtp'); if (ntpEl) ntpEl.innerHTML = '&#128336; NTP Sync: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['NTPSYNC'] || '--') + '</span>'; } catch(e) {} }"));
+  client.println(F("async function pollSysInfo() { if(isOffline) return; try { const res = await safeFetch('/sysinfo?t=' + new Date().getTime()); if(!res) return; const text = await res.text(); const pairs = {}; text.trim().split(',').forEach(p => { const i = p.indexOf(':'); if (i !== -1) pairs[p.substring(0,i).trim()] = p.substring(i+1).trim(); }); const ram = parseInt(pairs['RAM'] || 0); const ramColor = ram > 2000 ? '#2ecc71' : ram > 1000 ? '#f39c12' : '#e74c3c'; const ramEl = document.getElementById('sysRam'); if (ramEl) ramEl.innerHTML = 'RAM: <span style=\"color:' + ramColor + '; font-weight:bold;\">' + (ram/1024).toFixed(1) + ' KB</span>'; const upEl = document.getElementById('sysUptime'); if (upEl) upEl.innerHTML = '&#9201; Uptime: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['UPTIME'] || '--') + '</span>'; const sdEl = document.getElementById('sysSd'); if (sdEl) { sdEl.textContent = 'SD: ' + (pairs['SD'] || '--'); sdEl.style.color = pairs['SD']==='OK' ? '#27ae60' : '#e74c3c'; } const wrEl = document.getElementById('sysWrite'); if (wrEl) wrEl.innerHTML = '&#128221; Last Write: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['LASTWRITE'] || '--') + '</span>'; const ntpEl = document.getElementById('sysNtp'); if (ntpEl) ntpEl.innerHTML = '&#128336; NTP Sync: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['NTPSYNC'] || '--') + '</span>'; } catch(e) { handleDisconnect(); } }"));
+  
   client.println(F("function updateLastUpdate() { document.getElementById('lastUpdate').textContent = new Date().toLocaleString(); }"));
 
-  client.println(F("async function clearEvents() { if (confirm('Clear alert history?')) { try { await fetch('/clear-events'); document.getElementById('eventList').innerHTML = '<li>No recent alerts.</li>'; } catch(e) { alert('Failed to clear alerts.'); } } }"));
-  client.println(F("async function pollEvents() { try { let res = await fetch('/events?t=' + new Date().getTime()); if (res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) {} }"));
+  client.println(F("async function clearEvents() { if (confirm('Clear alert history?')) { try { await fetch('/clear-events'); document.getElementById('eventList').innerHTML = '<li>No recent alerts.</li>'; } catch(e) { handleDisconnect(); } } }"));
+  
+  client.println(F("async function pollEvents() { if(isOffline) return; try { let res = await safeFetch('/events?t=' + new Date().getTime()); if (res && res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else if (res) { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) { handleDisconnect(); } }"));
 
   // --- BOOT SEQUENCE & STAGGERED TIMERS ---
   client.println(F("async function bootUp() {"));
-  client.println(F("  await updateCharts();")); // Wait for heavy charts first
+  client.println(F("  await updateCharts();")); 
   client.println(F("  await pollStatus();"));
   client.println(F("  await pollSysInfo();"));
   client.println(F("  await pollThreshold();"));
   client.println(F("  await pollEvents();"));
   
-  // Mathematically offset the background timers so they NEVER overlap
-  client.println(F("  setInterval(updateCharts, 300000);"));  // Every 5 mins
-  client.println(F("  setInterval(pollStatus, 30000);"));     // Every 30s
-  client.println(F("  setInterval(pollSysInfo, 31000);"));    // Every 31s
-  client.println(F("  setInterval(pollThreshold, 32000);"));  // Every 32s
-  client.println(F("  setInterval(pollEvents, 59000);"));     // Every 59s
+  client.println(F("  setInterval(updateCharts, 300000);"));  
+  client.println(F("  setInterval(pollStatus, 30000);"));     
+  client.println(F("  setInterval(pollSysInfo, 31000);"));    
+  client.println(F("  setInterval(pollThreshold, 32000);"));  
+  client.println(F("  setInterval(pollEvents, 59000);"));     
   client.println(F("}"));
 
-  client.println(F("bootUp();")); // Start the line!
-  // ---------------------------------------------
-
+  client.println(F("bootUp();")); 
   client.println(F("</script></body></html>"));
 }
