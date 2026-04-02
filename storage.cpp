@@ -565,7 +565,8 @@ void serveRootPage(EthernetClient &client) {
   
   client.println(F("async function pollEvents() { if(isOffline) return; try { let res = await safeFetch('/events?t=' + new Date().getTime()); if (res && res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else if (res) { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) { handleDisconnect(); } }"));
 
-  // --- BOOT SEQUENCE & STAGGERED TIMERS ---
+  // --- BOOT SEQUENCE & PRIME NUMBER TIMERS ---
+  // These timings ensure the browser never collides with the Arduino's exact 300-second SD card writes!
   client.println(F("async function bootUp() {"));
   client.println(F("  await updateCharts();")); 
   client.println(F("  await pollStatus();"));
@@ -573,11 +574,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  await pollThreshold();"));
   client.println(F("  await pollEvents();"));
   
-  client.println(F("  setInterval(updateCharts, 300000);"));  
-  client.println(F("  setInterval(pollStatus, 30000);"));     
-  client.println(F("  setInterval(pollSysInfo, 31000);"));    
-  client.println(F("  setInterval(pollThreshold, 32000);"));  
-  client.println(F("  setInterval(pollEvents, 59000);"));     
+  client.println(F("  setInterval(updateCharts, 307000);"));  // 5 mins and 7 seconds
+  client.println(F("  setInterval(pollStatus, 29000);"));     // 29 seconds
+  client.println(F("  setInterval(pollSysInfo, 31000);"));    // 31 seconds
+  client.println(F("  setInterval(pollThreshold, 37000);"));  // 37 seconds
+  client.println(F("  setInterval(pollEvents, 53000);"));     // 53 seconds
   client.println(F("}"));
 
   client.println(F("bootUp();")); 
