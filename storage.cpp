@@ -527,7 +527,8 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  let rangeH = parseInt(document.getElementById('humidRange').value);"));
   client.println(F("  let tempData = await fetchData('temp.csv', rangeT);"));
   client.println(F("  let humidData = await fetchData('humid.csv', rangeH);"));
-  client.println(F("  if (tempData.labels.length === 0) return;")); 
+  
+  // NOTE: The buggy "return" line that skipped the humidity chart has been entirely removed!
 
   client.println(F("  if(tempChart) tempChart.destroy();"));
   client.println(F("  tempChart = new Chart(document.getElementById('tempChart'), {"));
