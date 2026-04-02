@@ -26,10 +26,10 @@ An Arduino-based temperature and humidity monitoring system for industrial aging
 
 Once running, the system enters a continuous monitoring loop that:
 
-- **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates between temperature and humidity views automatically.
+- **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates through sensor zones automatically.
 - **Controls the LED indicators** based on sensor status — solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
 - **Logs sensor data to SD card** every 5 minutes on strict 5-minute clock boundaries, writing timestamped rows to daily files (`YYMMDD_T.csv` and `YYMMDD_H.csv`). A midnight janitor automatically deletes files older than 180 days to prevent the SD card from filling up. Data survives power outages and can be downloaded directly from the web interface.
-- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. Charts support scroll-wheel zoom, click-drag pan, and pinch-to-zoom. A sensor status bar shows live temperature in °C and °F per sensor with color-coded threshold state indicators. A System Status panel shows RAM, uptime, SD status, last write time, and last NTP sync. A Watchdog Alerts panel logs any crash-recovery reboots. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
+- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. Charts support scroll-wheel zoom, click-drag pan, and pinch-to-zoom. A sensor status bar shows live temperature in °C and °F per sensor with color-coded threshold state indicators. A System Status panel shows RAM, uptime, SD status, last write time, and last NTP sync. A Watchdog Alerts panel logs crash-recovery reboots. An offline detection banner appears automatically if the Arduino stops responding and dismisses when the connection is restored. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
 - **Syncs time via NTP** at startup and every 24 hours thereafter. The system first contacts the internal NTP server `192.168.80.8` and falls back to the public NTP pool `pool.ntp.org` if unavailable. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
 - **Runs a hardware watchdog** armed at 8 seconds. If the system stalls for any reason — network hang, SD deadlock, infinite loop — the Arduino reboots automatically. Each reboot is timestamped and logged to `EVENTS.txt` on the SD card.
 - **Tracks network connections** per IP address. A maximum of 8 simultaneous global connections and 3 per IP are enforced; idle connections are released after 5 minutes.
@@ -180,6 +180,27 @@ Save `config.h` and re-upload the sketch to your Arduino.
 
 ---
 
+### Example Walkthrough
+
+```
+Step 1: Choose values
+  Salt:     MyCompanySalt2026
+  Password: SecurePass123!
+
+Step 2: Combine (no spaces)
+  Combined: MyCompanySalt2026SecurePass123!
+
+Step 3: Generate hash at website
+  Input:  MyCompanySalt2026SecurePass123!
+  Output: 7a8f9b2c3d4e5f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4
+
+Step 4: Put in config.h
+  #define AUTH_SALT            "MyCompanySalt2026"
+  #define AUTH_PASSWORD_SHA256 "7a8f9b2c3d4e5f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4"
+```
+
+---
+
 ### Password Security Guidelines
 
 **DO:**
@@ -196,11 +217,25 @@ Save `config.h` and re-upload the sketch to your Arduino.
 
 ---
 
+### Regenerating Your Password
+
+If you need to change the password after deployment:
+
+1. Keep the same salt or choose a new one.
+2. Combine the new salt and new password.
+3. Generate a new SHA256 hash at the website.
+4. Update both values in `config.h`.
+5. Re-upload the sketch to the Arduino.
+
+---
+
 ## Memory Architecture and Data Persistence
 
 The Arduino Mega uses four distinct memory types. Understanding where data lives explains how the system behaves after a power outage.
 
 ### Flash Memory — Where Credentials Are Stored
+
+Flash stores the compiled program code and all `#define` constants, including your authentication salt and password hash.
 
 | Property | Value |
 |----------|-------|
@@ -209,7 +244,13 @@ The Arduino Mega uses four distinct memory types. Understanding where data lives
 | Write method | Arduino IDE upload only |
 | Runtime modification | Not possible |
 
+Because credentials are in Flash, they cannot be changed by a running bug, network attack, or power event. Changing them requires uploading a new sketch via USB.
+
+---
+
 ### EEPROM — Where the Temperature Threshold Is Stored
+
+EEPROM stores only the user-configured temperature threshold (4 bytes). It is not used for credentials because it is too easily readable and writable at runtime.
 
 | Property | Value |
 |----------|-------|
@@ -218,23 +259,46 @@ The Arduino Mega uses four distinct memory types. Understanding where data lives
 | Survives power loss | **Yes** |
 | Write method | Button interface at runtime |
 
+```cpp
+// sensors.cpp — Reading threshold on startup
+void initSensors() {
+  EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
+  if (isnan(tempThreshold) || tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
+    tempThreshold = DEFAULT_TEMP_THRESHOLD;
+    EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
+  }
+}
+
+// sensors.cpp — Saving threshold when user adjusts via button
+void handleButtonPress() {
+  EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
+}
+```
+
+---
+
 ### RAM — Volatile Working Memory
+
+RAM holds all runtime variables (sensor readings, connection state, HTTP buffers) and is lost immediately on power loss. The system re-initializes everything from Flash and EEPROM at each boot.
 
 | Property | Value |
 |----------|-------|
 | Size | 8 KB |
 | Survives power loss | **No** |
 
+---
+
 ### SD Card — Historical Sensor Data
 
-The SD card stores daily files (`YYMMDD_T.csv` and `YYMMDD_H.csv`) with 180-day rolling retention, and `EVENTS.txt` for watchdog reboot logs.
+The SD card stores `temp.csv` and `humid.csv`. Data accumulates continuously and survives power outages. The last write before a power loss may be incomplete but the rest of the file is unaffected.
 
 | Property | Value |
 |----------|-------|
 | Size | User-supplied (typically 2–32 GB) |
 | Survives power loss | **Yes** |
-| Retention | 180 days (automated midnight cleanup) |
 | Estimated growth | ~14 KB/day · ~5 MB/year |
+
+---
 
 ### Memory Persistence Summary
 
@@ -244,6 +308,27 @@ The SD card stores daily files (`YYMMDD_T.csv` and `YYMMDD_H.csv`) with 180-day 
 | **EEPROM**  | 4 KB   | **Yes**             | No                  |
 | **RAM**     | 8 KB   | **No**              | No                  |
 | **SD Card** | User   | **Yes**             | No                  |
+
+---
+
+### Power Outage Recovery Sequence
+
+```
+[0s]    Power on
+[1s]    Flash loads program code and credentials
+[2s]    EEPROM reads temperature threshold
+[3s]    Display shows boot sequence
+[5s]    Sensors initialize
+[10s]   Network attempts DHCP
+[15s]   Device IP address displayed on LCD
+[20s]   NTP time sync begins (primary then fallback)
+[25s]   System fully operational
+[30s]   First sensor reading logged to SD card
+```
+
+No user action is required after a power outage. Credentials, threshold settings, and all historical data are automatically available.
+
+---
 
 ### Memory Health Indicators
 
@@ -260,7 +345,7 @@ The SD card stores daily files (`YYMMDD_T.csv` and `YYMMDD_H.csv`) with 180-day 
 
 ### Finding the Device IP Address
 
-After boot, the device displays its IP address and scrolls the DNS hostname on the LCD for 10 seconds, and prints both to the Serial Monitor (115200 baud). The device attempts DHCP first and falls back to the static IP `192.168.48.20` if DHCP fails.
+After boot, the device displays its IP address on the LCD for 10 seconds and on the Serial Monitor (115200 baud). The device attempts DHCP first and falls back to the static IP `192.168.48.20` if DHCP fails.
 
 ### Accessing the Web Interface
 
@@ -304,10 +389,13 @@ Shows live temperature in °C and °F for each sensor with a colored dot indicat
 - Pinch (touch) — Zooms on mobile
 
 **System Status Panel** (below charts)
-Shows free RAM (color-coded), uptime, SD card status, last CSV write time, and last NTP sync time. Polls every 30 seconds. Also contains the "Prepare SD for Removal / Halt" button.
+Shows free RAM (color-coded green/yellow/red), uptime, SD card status, last CSV write time, and last NTP sync time. Polls every 31 seconds. Also contains the "Prepare SD for Removal / Halt" button.
 
 **Watchdog Alerts Panel** (below System Status)
-Shows the 5 most recent entries from `EVENTS.txt`, each timestamped with the date and time of the reboot. Polls every 60 seconds. Contains a "Clear Alerts" button to reset the log.
+Shows the 5 most recent entries from `EVENTS.txt`, each timestamped with the date and time of the reboot. Polls every 59 seconds. Contains a "Clear Alerts" button to reset the log.
+
+**Offline Detection Banner**
+A yellow "SYSTEM OFFLINE" banner appears at the top of the page if the Arduino stops responding. The dashboard retries every 4 seconds and automatically dismisses the banner when the device comes back online. All polls pause while offline and resume automatically on reconnect.
 
 ### Safe SD Card Removal
 
@@ -337,7 +425,7 @@ The threshold is adjusted using the physical button on the device.
 1. Press and hold the button for **5 seconds**.
 2. Both LEDs alternate at 250 ms to confirm you are entering adjustment mode.
 3. Green LED flashes 10 times to confirm entry.
-4. **Keep holding** — the threshold increases by 1°C every 2 seconds. The current value is shown on the LCD.
+4. **Keep holding** — the threshold increases by 1°C every 2 seconds, cycling between 37°C and 47°C. The current value is shown on the LCD.
 5. **Release the button** when the desired threshold is displayed to save.
 6. Red LED flashes 10 times to confirm the save.
 7. Both LEDs flash 20 times as a final confirmation.
@@ -345,6 +433,17 @@ The threshold is adjusted using the physical button on the device.
 9. The web dashboard threshold lines update automatically within 30 seconds.
 
 The new threshold is saved to EEPROM and persists through power outages.
+
+### LED Behavior During Adjustment
+
+| Phase                   | Green LED          | Red LED            | Duration      |
+|-------------------------|--------------------|--------------------|---------------|
+| Holding button (0–5 s)  | Alternates 250 ms  | Alternates 250 ms  | 5 seconds     |
+| Entry confirmation      | Flashes 10×        | OFF                | ~5 seconds    |
+| Adjusting (holding)     | Blinks 250 ms      | OFF                | Until release |
+| Save confirmation       | OFF                | Flashes 10×        | ~5 seconds    |
+| Final confirmation      | Flashes 20×        | Flashes 20×        | ~10 seconds   |
+| Return to normal        | Status dependent   | Status dependent   | Ongoing       |
 
 ### LED Status During Normal Operation
 
@@ -374,6 +473,28 @@ All web endpoints require authentication: the root dashboard (`/`), temperature 
 ### Hardware Watchdog
 
 The 8-second hardware watchdog provides automatic crash recovery. If any part of the firmware stalls — network hang, SD deadlock, or unexpected loop — the Arduino reboots automatically without human intervention. All reboots are logged to `EVENTS.txt` with a timestamp and are visible in the Watchdog Alerts panel on the dashboard.
+
+---
+
+### Additional Security Measures
+
+- **Request size limiting** — 1024-byte maximum prevents buffer overflow attacks
+- **Request timeout** — 5-second per-request timeout prevents slowloris attacks
+- **HTTP Basic Auth** — Industry-standard authentication protocol
+- **No default credentials** — System requires password setup before first use
+- **Local network only** — Designed for internal facility use, not internet exposure
+
+---
+
+### Security Best Practices for Deployment
+
+1. **Change the default salt** — Never use the example salt in production.
+2. **Use strong passwords** — Minimum 12 characters, mixed case, numbers, and symbols.
+3. **Unique salt per installation** — Each deployed unit should have a different salt.
+4. **Network isolation** — Deploy on an isolated VLAN or private network segment.
+5. **Physical security** — Secure the Arduino in a locked enclosure.
+6. **Backup credentials** — Store your salt and password in a secure password manager.
+7. **Review access logs** — Monitor Serial Monitor output for unauthorized login attempts.
 
 ---
 
@@ -432,10 +553,16 @@ Edit `config.h` to change these parameters:
 - Common causes: SD card too slow or full, network instability, power supply brownout.
 - Confirm SD card is formatted FAT32 and has adequate free space.
 
+### Dashboard shows "SYSTEM OFFLINE" banner
+
+- The Arduino is unreachable. The dashboard retries automatically every 4 seconds.
+- Check that the Ethernet cable is connected and the device has power.
+- If the device rebooted due to the watchdog, wait for it to finish its boot sequence (~30 seconds) and the banner will dismiss automatically.
+
 ### Chart not rendering / blank chart area
 
 - Open browser developer tools (F12) and check the console for JavaScript errors.
-- Confirm the CDN scripts are loading — the device needs network access to `cdn.jsdelivr.net` for Chart.js, hammerjs, and the zoom plugin.
+- Confirm the CDN scripts are loading — the browser needs network access to `cdn.jsdelivr.net` for Chart.js, hammerjs, and the zoom plugin.
 - Try clicking "Update Now" to force a data refresh.
 
 ### DHCP failed / cannot reach web interface
@@ -477,6 +604,61 @@ Edit `config.h` to change these parameters:
 - Check SD card is properly inserted and formatted FAT32.
 - The last data point written before the outage may be incomplete — all prior records are intact.
 - Daily files are written independently, so only the current day's last entry is at risk.
+
+### Temperature threshold shows NaN or 0 on boot
+
+- This occurs when EEPROM has never been written. The system automatically resets to 42°C and writes a valid value to EEPROM. This will only happen once on a fresh board.
+- If it persists, use the button adjustment sequence to manually set and save a threshold value.
+
+### Temperature threshold resets after reboot
+
+- The threshold is stored in EEPROM and survives power loss. If it resets, EEPROM may be corrupted (rare).
+- Re-set the threshold via the button to write a fresh value.
+- Confirm the stored value is within the valid range (37–47°C).
+
+### DHCP failed / cannot reach web interface
+
+- The device falls back to static IP `192.168.48.20` when DHCP fails — try that address first.
+- Confirm the Ethernet cable is connected and the network has a DHCP server.
+- Verify you are on the same network segment as the device.
+- Confirm your firewall is not blocking port 80.
+
+### Authentication fails after password setup
+
+- Confirm `AUTH_SALT` in `config.h` exactly matches the salt you used to generate the hash.
+- Verify you uploaded the sketch after saving your changes to `config.h`.
+- Check the Serial Monitor for authentication error messages.
+
+### Time not syncing / wrong time displayed
+
+- The system tries the internal NTP server `192.168.80.8` first, then falls back to `pool.ntp.org`.
+- Check the Serial Monitor — it will show which server responded or report timeout on both.
+- If both servers time out, the device will continue running but timestamps will be incorrect until the next NTP retry 24 hours later.
+- Verify the device has network access and that port 123 (UDP) is not blocked by a firewall.
+
+### Time is off by one hour
+
+- This indicates a DST detection failure. Confirm you are running v1.5 or later which includes the corrected DST calculation.
+- Check the Serial Monitor output — it will show `DST Active: Yes (EDT)` or `DST Active: No (EST)`.
+
+### SD card initialization failed
+
+- Confirm the SD card is formatted as FAT32.
+- Check the SD card module wiring (CS pin 4).
+- Verify the card is properly seated.
+- Try a different SD card. Cards larger than 32GB may need to be reformatted as FAT32 — Windows defaults these to exFAT which is not compatible.
+
+### CSV data lost after power outage
+
+- Check that the SD card is properly inserted.
+- Verify the card is formatted as FAT32.
+- The last data point written before the outage may be incomplete — all prior records are intact.
+
+### Credentials not working after power outage
+
+- Credentials are stored in Flash memory, which survives power loss indefinitely.
+- Confirm you originally uploaded the sketch with the correct credentials.
+- If suspected corruption, re-upload the sketch with your `config.h` values.
 
 ---
 

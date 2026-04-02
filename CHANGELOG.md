@@ -4,46 +4,63 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.13] — 2026-04-02
+
+### Added
+- **Offline detection banner** — A yellow "SYSTEM OFFLINE" banner appears at the top of the dashboard if the Arduino stops responding. Automatically dismisses when the connection is restored
+- **Auto-reconnect** — `handleDisconnect()` and `checkReconnect()` retry the connection every 4 seconds after a failure, resuming polls automatically when the device comes back online
+- **`safeFetch()` wrapper** — All dashboard fetch calls now go through `safeFetch()`, which catches network errors, triggers the offline banner, and returns `null` safely instead of throwing unhandled exceptions
+- **Staggered poll timers** — Dashboard intervals offset to prevent simultaneous requests: `updateCharts` every 300s, `pollStatus` every 30s, `pollSysInfo` every 31s, `pollThreshold` every 32s, `pollEvents` every 59s
+- **`bootUp()` async init sequence** — Page load now awaits each poll in sequence (`updateCharts` → `pollStatus` → `pollSysInfo` → `pollThreshold` → `pollEvents`) before arming the repeating timers, preventing race conditions on first load
+- **Empty data guard** — `updateCharts()` returns early if `tempData.labels.length === 0`, preventing a blank chart from destroying a previously-rendered chart when the device is briefly unreachable
+- **`EVENTS.txt` missing guard** — `serveFile()` now returns an empty `200 OK` instead of `404` when `EVENTS.txt` does not exist yet, preventing the Watchdog Alerts panel from showing an error on a fresh install
+
+### Changed
+- **Authentication restored to full inline check** — `Aging_Room.ino` now reads HTTP headers line-by-line, captures the `Authorization:` header into `authHeader`, and calls `checkAuth(authHeader)` before routing any request. Previous version had auth accidentally removed
+- **All poll functions skip when offline** — `pollStatus()`, `pollSysInfo()`, `pollThreshold()`, `pollEvents()`, `updateCharts()`, and `downloadDateRange()` all check `isOffline` at entry and return immediately if the device is unreachable
+
+---
+
 ## [v1.12] — 2026-03-29
 
 ### Added
 - **Hardware Watchdog Timer** — 8-second watchdog armed via `wdt_enable(WDTO_8S)` in `setup()`. If the main loop stalls for any reason (network hang, SD deadlock, infinite loop), the Arduino automatically reboots
 - **Watchdog Event Logging** — On every boot, once NTP syncs successfully, a timestamped entry is written to `EVENTS.txt` on the SD card, creating a permanent audit trail of all watchdog-triggered reboots
-- **Watchdog Alerts Panel** — Web dashboard now shows a "Recent Watchdog Alerts" panel below System Status, displaying the 5 most recent entries from `EVENTS.txt`, polling every 60 seconds automatically
+- **Watchdog Alerts Panel** — Web dashboard shows a "Recent Watchdog Alerts" panel below System Status, displaying the 5 most recent entries from `EVENTS.txt`, polling every 60 seconds automatically
 - **Clear Alerts button** — Calls `/clear-events` to delete `EVENTS.txt` and reset the log
 - **Safe SD Eject** — "Prepare SD for Removal / Halt" button in System Status panel calls `/eject`, unmounts the SD card safely, displays `SD UNMOUNTED / SAFE TO UNPLUG` on the LCD, and halts the system in a safe loop until power is removed
-- **Archive date range picker** — Archive tab redesigned from single-date to From/To date range. `downloadDateRange()` fetches all matching daily files across the selected range, combines them into a single merged CSV download with progress reporting
+- **Archive date range picker** — Archive tab redesigned from single-date to From/To date range. `downloadDateRange()` fetches all matching daily files across the selected range and combines them into a single merged CSV download with progress reporting
 - **`/events` endpoint** — Serves `EVENTS.txt` from SD card as plain text
 - **`/clear-events` endpoint** — Deletes `EVENTS.txt` from SD card
 - **`/eject` endpoint** — Safely unmounts SD, updates LCD, halts system in watchdog-pet loop
-- **ERR blink animation** — ERR state sensor dots and labels now visually pulse via CSS `@keyframes errorBlink` animation
+- **ERR blink animation** — ERR state sensor dots and labels visually pulse via CSS `@keyframes errorBlink`
 
 ### Changed
-- **Sensor identity colors** — Changed to a colorblind-friendly palette: A=`#0072B2` (blue), B=`#E69F00` (yellow/amber), C=`#CC79A7` (pink), D=`#56B4E9` (light blue). Colors are consistent across status bar, chart lines, and chart legend
+- **Sensor identity colors** — Changed to a colorblind-friendly palette: A=`#0072B2` (blue), B=`#E69F00` (yellow/amber), C=`#CC79A7` (pink), D=`#56B4E9` (light blue). Consistent across status bar, chart lines, and chart legend
 - **Archive tab** — Single calendar date picker replaced with From/To date range selector with progress feedback
 - **Boot LCD hostname scroll** — Extended from 5 seconds to 10 seconds
-- **NTP sync** — Watchdog is disarmed before `requestNtpTime()` and re-armed immediately after, preventing false reboots during the 3-second NTP timeout window
-- **`wdt_reset()` coverage** — Called in: main `loop()` top, client connection inner loop, `/archive` file streaming, `serveFile()` data streaming, SD init failure loop, and all blocking sections of `handleButtonPress()` (5s hold, entry LED flash, adjustment loop, save confirmation, success screen)
+- **NTP sync** — Watchdog is disarmed before `requestNtpTime()` and re-armed immediately after to prevent false reboots during the 3-second NTP timeout window
+- **`wdt_reset()` coverage** — Called in: main `loop()` top, client connection inner loop, `/archive` file streaming, `serveFile()` data streaming, SD init failure loop, and all blocking sections of `handleButtonPress()`
 - **Chart time axis** — Added `chartjs-adapter-date-fns` CDN for proper timestamp-based x-axis rendering
 - **Threshold adjustment range** — `MIN_THRESHOLD` changed from 37 to -40, `MAX_THRESHOLD` changed from 47 to 80 in `config.h`
 
 ### Fixed
 - Watchdog false reboot during button adjustment — all multi-second blocking loops in `handleButtonPress()` now call `wdt_reset()`
-- Watchdog false reboot during SD file streaming — large file reads now pet the watchdog inline to prevent timeout during chart data delivery
-- Watchdog false reboot during SD init failure — infinite LED blink loop now calls `wdt_reset()` to prevent reboot cascade
+- Watchdog false reboot during SD file streaming — large file reads now pet the watchdog inline
+- Watchdog false reboot during SD init failure — infinite LED blink loop now calls `wdt_reset()`
 
 ---
 
 ## [v1.11] — 2026-03-25
 
 ### Added
-- **Time-Aligned Logging** — Sensor readings now logged on strict 5-minute clock boundaries (e.g., 12:00, 12:05)
+- **Time-Aligned Logging** — Sensor readings logged on strict 5-minute clock boundaries (e.g., 12:00, 12:05)
 - **180-Day Rolling Retention** — Data stored in daily files: `YYMMDD_T.csv` (temperature) and `YYMMDD_H.csv` (humidity)
 - **Midnight Janitor** — Automated cleanup runs at 00:00 daily, deleting files exactly 180 days old
 - **Dynamic Chart Stitching** — Web server combines the 7 most recent daily files into a single data stream for the dashboard
 - **Archive Data tab** — Calendar picker UI for downloading specific historical 24-hour CSV files
 - **`/cleanup` endpoint** — Hidden endpoint to delete legacy `temp.csv` and `humid.csv` from the SD card
-- **Sensor status bar** — Shows live temperature in °C and °F per sensor with colored dot: green (OK), yellow (LOW/HIGH), red (ERR)
+- **Sensor status bar** — Shows live temperature in °C and °F per sensor with colored dot: green (OK), yellow (LOW/HIGH), red blinking (ERR)
 - **`/status` endpoint** — Returns label-prefixed sensor data: `A:21.3|OK,B:20.9|LOW,...`
 - **`/sysinfo` endpoint** — Returns free RAM, uptime, SD status, last CSV write time, last NTP sync time
 - **System Status panel** — RAM color-coded green/yellow/red, uptime, SD status, last write, last NTP sync. Polls every 30 seconds
@@ -58,8 +75,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - `serveStatus()` updated from plain `OK/ERR` to label-prefixed `LABEL:TEMP|STATE` format
-- `updateStatusBar()` keyed by sensor label (not array index) to prevent corruption when legend items are toggled
-- `sysPanel` div placed correctly outside `<script>` tag in HTML to prevent browser parse errors
+- `updateStatusBar()` keyed by sensor label not array index to prevent corruption when legend items are toggled
+- `sysPanel` div placed correctly outside `<script>` tag in HTML
 
 ### Fixed
 - `extern LiquidCrystal_I2C lcd` moved to file scope in `storage.cpp`
@@ -122,7 +139,7 @@ All notable changes to this project are documented in this file.
 ### Added
 - NTP fallback to public pool (`pool.ntp.org` / 216.239.35.0) if internal server `192.168.80.8` times out
 - `tryNtpSync()` helper function handles a single NTP server attempt, returns true/false
-- Serial Monitor reports which server responded or reports timeout on both
+- Serial Monitor reports which server responded or timeout on both
 
 ---
 
