@@ -554,6 +554,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  setInterval(pollEvents, 53000);"));     // 53 seconds
   client.println(F("}"));
 
-  client.println(F("bootUp();")); 
+  client.println(F("setTimeout(bootUp, 2000);")); // Let the Arduino catch its breath for 2 seconds!
   client.println(F("</script></body></html>"));
 }
