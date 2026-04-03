@@ -424,7 +424,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      el.querySelector('.sensor-dot').className = 'sensor-dot ' + info.idClass + (isErr ? ' dot-err' : !isOk ? ' dot-warn' : '');"));
   client.println(F("      const lbl = el.querySelector('.sensor-label'); lbl.className = 'sensor-label ' + info.idClass + (isErr ? ' sensor-err' : !isOk ? ' sensor-warn' : '');"));
   client.println(F("      if (isErr) { lbl.textContent = label + ' ERR'; el.querySelector('.sensor-temp').textContent = ''; }"));
-  client.println(F("      else { lbl.textContent = label; const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); const suffix = isLow ? ' \u2193 LOW' : isHigh ? ' \u2191 HIGH' : ' \u2713'; el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '\u00b0C (' + fVal + '\u00b0F)' + suffix; }"));
+  client.println(F("      else { lbl.textContent = label; const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); const suffix = isLow ? ' \u2193 LOW' : isHigh ? ' \u2191 HIGH' : ' \u2713'; el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '°C (' + fVal + '°F)' + suffix; }"));
   client.println(F("    }"));
   client.println(F("    if (tempChart) { const ds = tempChart.data.datasets.find(d => d.label === 'Sensor ' + label); if (ds) { ds.borderColor = isErr ? '#e74c3c' : info.color; ds.backgroundColor = ds.borderColor; ds.pointBackgroundColor = ds.borderColor; } }"));
   client.println(F("  }); if (tempChart) tempChart.update();"));

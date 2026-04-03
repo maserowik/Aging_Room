@@ -133,13 +133,19 @@ void loop() {
       nextLogEpoch = currentEpoch + (300 - (currentEpoch % 300));
     }
     if (currentEpoch >= nextLogEpoch) {
+      wdt_disable();       // <-- Muzzle the dog! SD writes can be slow
       appendCsvData();
+      wdt_enable(WDTO_8S); // <-- Re-arm the dog!
+      
       lastCsvWrite = millis();
       nextLogEpoch += 300; 
     }
   } else {
     if (millis() - lastCsvWrite >= CSV_WRITE_INTERVAL) {
+      wdt_disable();       // <-- Muzzle the dog!
       appendCsvData();
+      wdt_enable(WDTO_8S); // <-- Re-arm the dog!
+      
       lastCsvWrite = millis();
     }
   }
