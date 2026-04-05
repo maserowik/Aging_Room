@@ -546,6 +546,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  await pollSysInfo();"));
   client.println(F("  await pollThreshold();"));
   client.println(F("  await pollEvents();"));
+
+  client.println(F("  document.getElementById('tempRange').addEventListener('change', updateCharts);"));
+  client.println(F("  document.getElementById('humidRange').addEventListener('change', updateCharts);"));
+  
   
   client.println(F("  setInterval(updateCharts, 307000);"));  // 5 mins and 7 seconds
   client.println(F("  setInterval(pollStatus, 29000);"));     // 29 seconds
