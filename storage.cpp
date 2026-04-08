@@ -127,7 +127,13 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
         File f = SD.open(fn, FILE_READ);
         if (f) {
           while(f.available()) { wdt_reset(); if (f.read() == '\n') break; } 
-          while(f.available()) { client.write(f.read()); wdt_reset(); }
+          
+          byte buf[64];
+          while(f.available()) { 
+            int n = f.read(buf, sizeof(buf));
+            client.write(buf, n);
+            wdt_reset(); 
+          }
           f.close();
         }
       }
@@ -140,7 +146,13 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
     client.println("HTTP/1.1 200 OK");
     client.print("Content-Type: "); client.println(contentType);
     client.println("Connection: close\n");
-    while (file.available()) { client.write(file.read()); wdt_reset(); }
+    
+    byte buf[64];
+    while (file.available()) { 
+      int n = file.read(buf, sizeof(buf));
+      client.write(buf, n); 
+      wdt_reset(); 
+    }
     file.close();
   } else {
     client.println("HTTP/1.1 404 Not Found\nConnection: close\n");
@@ -541,16 +553,19 @@ void serveRootPage(EthernetClient &client) {
 
   // --- BOOT SEQUENCE & PRIME NUMBER TIMERS ---
   client.println(F("async function bootUp() {"));
-  client.println(F("  await updateCharts();")); 
-  client.println(F("  await pollStatus();"));
-  client.println(F("  await pollSysInfo();"));
-  client.println(F("  await pollThreshold();"));
-  client.println(F("  await pollEvents();"));
 
+  // FIX: Dropdowns activated FIRST before heavy fetching happens
   client.println(F("  document.getElementById('tempRange').addEventListener('change', updateCharts);"));
   client.println(F("  document.getElementById('humidRange').addEventListener('change', updateCharts);"));
-  
-  
+
+  client.println(F("  try {"));
+  client.println(F("    await updateCharts();")); 
+  client.println(F("    await pollStatus();"));
+  client.println(F("    await pollSysInfo();"));
+  client.println(F("    await pollThreshold();"));
+  client.println(F("    await pollEvents();"));
+  client.println(F("  } catch(e) { console.log('Bootup interrupted, but UI active'); }"));
+
   client.println(F("  setInterval(updateCharts, 307000);"));  // 5 mins and 7 seconds
   client.println(F("  setInterval(pollStatus, 29000);"));     // 29 seconds
   client.println(F("  setInterval(pollSysInfo, 31000);"));    // 31 seconds
