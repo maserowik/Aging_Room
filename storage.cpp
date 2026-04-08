@@ -306,14 +306,16 @@ void serveRootPage(EthernetClient &client) {
   wdt_reset(); // WATCHDOG CHECKPOINT 2
 
   client.println(F("<div id='temp' class='tab-content active'>"));
-  client.println(F("<label>Range: <select id='tempRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
+  // FIX 1 APPLIED HERE (value attributes added, default is 7)
+  client.println(F("<label>Range: <select id='tempRange'><option value='1'>1</option><option value='3'>3</option><option value='5'>5</option><option value='7' selected>7</option></select> days</label>"));
   client.println(F("<button onclick='downloadChart(tempChart, \"temp\")'>Export PNG</button>"));
   client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(tempChart&&tempChart.resetZoom)tempChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='tempChart'></canvas></div></div>"));
 
   client.println(F("<div id='humid' class='tab-content'>"));
-  client.println(F("<label>Range: <select id='humidRange'><option selected>1</option><option>3</option><option>5</option><option>7</option></select> days</label>"));
+  // FIX 1 APPLIED HERE (value attributes added, default is 7)
+  client.println(F("<label>Range: <select id='humidRange'><option value='1'>1</option><option value='3'>3</option><option value='5'>5</option><option value='7' selected>7</option></select> days</label>"));
   client.println(F("<button onclick='downloadChart(humidChart, \"humid\")'>Export PNG</button>"));
   client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
@@ -460,7 +462,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  lines.forEach((line, idx) => {"));
   client.println(F("    if (idx % downsampleRate !== 0) return;"));
   client.println(F("    let [date, time, a, b, c, d] = line.split(','); if (!date || !time) return;"));
-  client.println(F("    let dtStr = date.split('-').join('/') + ' ' + time; let dt = new Date(dtStr);"));
+  
+  // FIX 2 APPLIED HERE (ISO 8601 date parsing)
+  client.println(F("    let dtStr = date + 'T' + time; let dt = new Date(dtStr);"));
+  
   client.println(F("    if(dt.getTime() >= limit){ labels.push(dt.getTime()); sensorsA.push(parseFloat(a) || null); sensorsB.push(parseFloat(b) || null); sensorsC.push(parseFloat(c) || null); sensorsD.push(parseFloat(d) || null); }"));
   client.println(F("  });"));
   client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD};"));
@@ -554,7 +559,6 @@ void serveRootPage(EthernetClient &client) {
   // --- BOOT SEQUENCE & PRIME NUMBER TIMERS ---
   client.println(F("async function bootUp() {"));
 
-  // FIX: Dropdowns activated FIRST before heavy fetching happens
   client.println(F("  document.getElementById('tempRange').addEventListener('change', updateCharts);"));
   client.println(F("  document.getElementById('humidRange').addEventListener('change', updateCharts);"));
 
