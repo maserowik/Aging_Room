@@ -29,7 +29,7 @@ Once running, the system enters a continuous monitoring loop that:
 - **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates through sensor zones automatically.
 - **Controls the LED indicators** based on sensor status — solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
 - **Logs sensor data to SD card** every 5 minutes on strict 5-minute clock boundaries, writing timestamped rows to daily files (`YYMMDD_T.csv` and `YYMMDD_H.csv`). A midnight janitor automatically deletes files older than 180 days to prevent the SD card from filling up. Data survives power outages and can be downloaded directly from the web interface.
-- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. Charts support scroll-wheel zoom, click-drag pan, and pinch-to-zoom. A sensor status bar shows live temperature in °C and °F per sensor with color-coded threshold state indicators. A System Status panel shows RAM, uptime, SD status, last write time, and last NTP sync. A Watchdog Alerts panel logs crash-recovery reboots. An offline detection banner appears automatically if the Arduino stops responding and dismisses when the connection is restored. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
+- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. Charts support scroll-wheel zoom, click-drag pan, and pinch-to-zoom. Bold vertical grid lines mark each midnight boundary on multi-day views. A sensor status bar shows live temperature in °C and °F per sensor with color-coded threshold state indicators. A System Status panel shows RAM, uptime, SD status, last write time, and last NTP sync. A Watchdog Alerts panel logs crash-recovery reboots. An offline detection banner appears automatically if the Arduino stops responding and dismisses when the connection is restored. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
 - **Syncs time via NTP** at startup and every 24 hours thereafter. The system first contacts the internal NTP server `192.168.80.8` and falls back to the public NTP pool `pool.ntp.org` if unavailable. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
 - **Runs a hardware watchdog** armed at 8 seconds. If the system stalls for any reason — network hang, SD deadlock, infinite loop — the Arduino reboots automatically. Each reboot is timestamped and logged to `EVENTS.txt` on the SD card.
 - **Tracks network connections** per IP address. A maximum of 8 simultaneous global connections and 3 per IP are enforced; idle connections are released after 5 minutes.
@@ -290,7 +290,7 @@ RAM holds all runtime variables (sensor readings, connection state, HTTP buffers
 
 ### SD Card — Historical Sensor Data
 
-The SD card stores `temp.csv` and `humid.csv`. Data accumulates continuously and survives power outages. The last write before a power loss may be incomplete but the rest of the file is unaffected.
+The SD card stores daily temperature and humidity files. Data accumulates continuously and survives power outages. The last write before a power loss may be incomplete but the rest of the file is unaffected.
 
 | Property | Value |
 |----------|-------|
@@ -357,7 +357,7 @@ After boot, the device displays its IP address on the LCD for 10 seconds and on 
 ### Web Dashboard Features
 
 **Sensor Status Bar**
-Shows live temperature in °C and °F for each sensor with a colored dot indicator. Updates every 30 seconds automatically.
+Shows live sensor readings for each sensor with a colored dot indicator. Updates every 29 seconds automatically. The values displayed switch based on the active tab — temperature (°C and °F with threshold state) on the Temperature tab, and humidity (% RH) on the Humidity tab. On a tab switch the bar re-renders immediately using the last received data without waiting for the next poll.
 
 | Dot Color | Meaning |
 |-----------|---------|
@@ -380,7 +380,7 @@ Shows live temperature in °C and °F for each sensor with a colored dot indicat
 - **Archive Data tab** — From/To date range picker to download a combined CSV for any period up to 6 months
 
 **Chart Controls**
-- Range selector — 1, 3, 5, or 7 day views
+- Range selector — 1, 3, 5, or 7 day views. Changing the selector immediately redraws the chart without requiring a button click
 - Export PNG — Downloads a chart image
 - Update Now — Forces an immediate chart refresh
 - Reset Zoom — Returns chart to full time range
@@ -388,11 +388,16 @@ Shows live temperature in °C and °F for each sensor with a colored dot indicat
 - Click and drag — Pans the zoomed view
 - Pinch (touch) — Zooms on mobile
 
+**Chart Display**
+- Single-day view — x-axis tick labels show time only (e.g., `2:00 PM`)
+- Multi-day views — x-axis tick labels show date and time (e.g., `Apr 5, 2:00 PM`)
+- Midnight boundaries — a bold dark vertical line marks the start of each new day on multi-day views, making day transitions clearly visible
+
 **System Status Panel** (below charts)
 Shows free RAM (color-coded green/yellow/red), uptime, SD card status, last CSV write time, and last NTP sync time. Polls every 31 seconds. Also contains the "Prepare SD for Removal / Halt" button.
 
 **Watchdog Alerts Panel** (below System Status)
-Shows the 5 most recent entries from `EVENTS.txt`, each timestamped with the date and time of the reboot. Polls every 59 seconds. Contains a "Clear Alerts" button to reset the log.
+Shows the 5 most recent entries from `EVENTS.txt`, each timestamped with the date and time of the reboot. Polls every 53 seconds. Contains a "Clear Alerts" button to reset the log.
 
 **Offline Detection Banner**
 A yellow "SYSTEM OFFLINE" banner appears at the top of the page if the Arduino stops responding. The dashboard retries every 4 seconds and automatically dismisses the banner when the device comes back online. All polls pause while offline and resume automatically on reconnect.
@@ -425,12 +430,12 @@ The threshold is adjusted using the physical button on the device.
 1. Press and hold the button for **5 seconds**.
 2. Both LEDs alternate at 250 ms to confirm you are entering adjustment mode.
 3. Green LED flashes 10 times to confirm entry.
-4. **Keep holding** — the threshold increases by 1°C every 2 seconds, cycling between 37°C and 47°C. The current value is shown on the LCD.
+4. **Keep holding** — the threshold increases by 1°C every 2 seconds, cycling between −40°C and 80°C. The current value is shown on the LCD.
 5. **Release the button** when the desired threshold is displayed to save.
 6. Red LED flashes 10 times to confirm the save.
 7. Both LEDs flash 20 times as a final confirmation.
 8. The display shows the old and new threshold values for 10 seconds.
-9. The web dashboard threshold lines update automatically within 30 seconds.
+9. The web dashboard threshold lines update automatically within 37 seconds.
 
 The new threshold is saved to EEPROM and persists through power outages.
 
@@ -473,6 +478,8 @@ All web endpoints require authentication: the root dashboard (`/`), temperature 
 ### Hardware Watchdog
 
 The 8-second hardware watchdog provides automatic crash recovery. If any part of the firmware stalls — network hang, SD deadlock, or unexpected loop — the Arduino reboots automatically without human intervention. All reboots are logged to `EVENTS.txt` with a timestamp and are visible in the Watchdog Alerts panel on the dashboard.
+
+The watchdog is disarmed before SD write operations (`appendCsvData()`) and NTP syncs (`requestNtpTime()`), and immediately re-armed after each, preventing false reboots from slow SD cards or delayed NTP responses. Additional `wdt_reset()` checkpoints are distributed throughout `serveRootPage()` and all blocking loops to ensure the watchdog is consistently serviced during long operations.
 
 ---
 
@@ -564,6 +571,11 @@ Edit `config.h` to change these parameters:
 - Open browser developer tools (F12) and check the console for JavaScript errors.
 - Confirm the CDN scripts are loading — the browser needs network access to `cdn.jsdelivr.net` for Chart.js, hammerjs, and the zoom plugin.
 - Try clicking "Update Now" to force a data refresh.
+- If the device has been running for less than 5 minutes, no CSV data will exist yet. The chart will appear once the first log entry is written at the next 5-minute boundary.
+
+### Range dropdown does not update the chart
+
+- The dropdown change listener is registered inside `bootUp()`, which runs 2 seconds after the page loads. If you change the dropdown immediately on page open, click "Update Now" once — after that the listener is active and all changes auto-update immediately.
 
 ### DHCP failed / cannot reach web interface
 
@@ -575,11 +587,13 @@ Edit `config.h` to change these parameters:
 
 - Confirm `AUTH_SALT` in `config.h` exactly matches the salt used to generate the hash.
 - Verify sketch was uploaded after saving `config.h`.
+- Check the Serial Monitor for authentication error messages.
 
 ### Time not syncing / wrong time displayed
 
 - System tries `192.168.80.8` first, then falls back to `pool.ntp.org`.
 - Check Serial Monitor — shows which server responded or reports timeout on both.
+- If both servers time out, the device will continue running but timestamps will be incorrect until the next NTP retry 24 hours later.
 - Verify port 123 (UDP) is not blocked by a firewall.
 
 ### Time is off by one hour
@@ -590,7 +604,7 @@ Edit `config.h` to change these parameters:
 ### SD card initialization failed
 
 - Confirm SD card is formatted as FAT32.
-- Cards larger than 32GB may need to be reformatted — Windows defaults these to exFAT.
+- Cards larger than 32GB may need to be reformatted — Windows defaults these to exFAT which is not compatible.
 - Verify card is properly seated and CS pin wiring is correct (pin 4).
 
 ### Cannot safely remove SD card
@@ -605,54 +619,10 @@ Edit `config.h` to change these parameters:
 - The last data point written before the outage may be incomplete — all prior records are intact.
 - Daily files are written independently, so only the current day's last entry is at risk.
 
-### Temperature threshold shows NaN or 0 on boot
-
-- This occurs when EEPROM has never been written. The system automatically resets to 42°C and writes a valid value to EEPROM. This will only happen once on a fresh board.
-- If it persists, use the button adjustment sequence to manually set and save a threshold value.
-
 ### Temperature threshold resets after reboot
 
 - The threshold is stored in EEPROM and survives power loss. If it resets, EEPROM may be corrupted (rare).
 - Re-set the threshold via the button to write a fresh value.
-- Confirm the stored value is within the valid range (37–47°C).
-
-### DHCP failed / cannot reach web interface
-
-- The device falls back to static IP `192.168.48.20` when DHCP fails — try that address first.
-- Confirm the Ethernet cable is connected and the network has a DHCP server.
-- Verify you are on the same network segment as the device.
-- Confirm your firewall is not blocking port 80.
-
-### Authentication fails after password setup
-
-- Confirm `AUTH_SALT` in `config.h` exactly matches the salt you used to generate the hash.
-- Verify you uploaded the sketch after saving your changes to `config.h`.
-- Check the Serial Monitor for authentication error messages.
-
-### Time not syncing / wrong time displayed
-
-- The system tries the internal NTP server `192.168.80.8` first, then falls back to `pool.ntp.org`.
-- Check the Serial Monitor — it will show which server responded or report timeout on both.
-- If both servers time out, the device will continue running but timestamps will be incorrect until the next NTP retry 24 hours later.
-- Verify the device has network access and that port 123 (UDP) is not blocked by a firewall.
-
-### Time is off by one hour
-
-- This indicates a DST detection failure. Confirm you are running v1.5 or later which includes the corrected DST calculation.
-- Check the Serial Monitor output — it will show `DST Active: Yes (EDT)` or `DST Active: No (EST)`.
-
-### SD card initialization failed
-
-- Confirm the SD card is formatted as FAT32.
-- Check the SD card module wiring (CS pin 4).
-- Verify the card is properly seated.
-- Try a different SD card. Cards larger than 32GB may need to be reformatted as FAT32 — Windows defaults these to exFAT which is not compatible.
-
-### CSV data lost after power outage
-
-- Check that the SD card is properly inserted.
-- Verify the card is formatted as FAT32.
-- The last data point written before the outage may be incomplete — all prior records are intact.
 
 ### Credentials not working after power outage
 

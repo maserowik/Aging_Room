@@ -130,7 +130,7 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
         if (f) {
           while(f.available()) { wdt_reset(); if (f.read() == '\n') break; } 
           
-          byte buf[128]; // Fast chunk reading maintained to stop freezing
+          byte buf[128]; 
           while(f.available()) { 
             int n = f.read(buf, sizeof(buf));
             client.write(buf, n);
@@ -149,7 +149,7 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
     client.print("Content-Type: "); client.println(contentType);
     client.println("Connection: close\n");
     
-    byte buf[128]; // Fast chunk reading
+    byte buf[128]; 
     while (file.available()) { 
       int n = file.read(buf, sizeof(buf));
       client.write(buf, n); 
@@ -169,13 +169,17 @@ void serveThreshold(EthernetClient &client) {
 
 void serveStatus(EthernetClient &client) {
   extern float tA, tB, tC, tD;
+  extern float hA, hB, hC, hD;
   extern float tempThreshold;
   client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n");
   const char* labels[] = {"A", "B", "C", "D"};
   float temps[] = {tA, tB, tC, tD};
+  float humids[] = {hA, hB, hC, hD};
+  
   for (int i = 0; i < 4; i++) {
     if (i > 0) client.print(",");
     client.print(labels[i]); client.print(":");
+    
     if (isnan(temps[i])) { client.print("ERR|ERR"); } 
     else {
       client.print(temps[i], 1); client.print("|");
@@ -183,6 +187,9 @@ void serveStatus(EthernetClient &client) {
       else if (temps[i] > tempThreshold + THRESHOLD_MARGIN) client.print("HIGH");
       else client.print("OK");
     }
+    client.print("|");
+    if (isnan(humids[i])) { client.print("ERR"); }
+    else { client.print(humids[i], 1); }
   }
   client.println();
 }
@@ -351,12 +358,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("</div>"));
 
   client.println(F("<script>"));
-  client.println(F("let tempChart, humidChart;"));
+  client.println(F("let tempChart, humidChart; let activeTab = 'temp'; let lastStatus = [];"));
   client.print(F("let threshold = ")); client.print(tempThreshold, 1); client.println(F("; const margin = 5.0;"));
 
   wdt_reset(); 
 
-  // --- NEW THREE STRIKES LOGIC ---
   client.println(F("let isOffline = false; let failedPings = 0;"));
   client.println(F("const warnBanner = document.createElement('div');"));
   client.println(F("warnBanner.style.cssText = 'display:none; background:#f1c40f; color:#856404; padding:15px; text-align:center; font-weight:bold; font-size:16px; position:fixed; top:0; left:0; width:100%; z-index:9999; box-shadow:0 4px 6px rgba(0,0,0,0.1);';"));
@@ -374,12 +380,12 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    else setTimeout(checkReconnect, 4000);"));
   client.println(F("  } catch(e) { setTimeout(checkReconnect, 4000); }"));
   client.println(F("}"));
-  // --------------------------------
 
   client.println(F("function showTab(id, evt){"));
   client.println(F("  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));"));
   client.println(F("  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));"));
   client.println(F("  document.getElementById(id).classList.add('active'); evt.target.classList.add('active');"));
+  client.println(F("  activeTab = id; if (lastStatus.length > 0) updateStatusBar(lastStatus);"));
   client.println(F("}"));
 
   client.println(F("function downloadChart(chart, label){"));
@@ -427,10 +433,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("const sensorMap = { 'A':{idClass:'s-a', color:'#0072B2'}, 'B':{idClass:'s-b', color:'#E69F00'}, 'C':{idClass:'s-c', color:'#CC79A7'}, 'D':{idClass:'s-d', color:'#56B4E9'} };"));
 
   client.println(F("function updateStatusBar(records) {"));
+  client.println(F("  lastStatus = records;"));
   client.println(F("  records.forEach(rec => {"));
   client.println(F("    const colonIdx = rec.indexOf(':'); if (colonIdx === -1) return;"));
   client.println(F("    const label = rec.substring(0, colonIdx).trim(); const parts = rec.substring(colonIdx + 1).trim().split('|');"));
-  client.println(F("    const tempC = parts[0], state = parts[1];"));
+  client.println(F("    const tempC = parts[0], state = parts[1], humid = parts[2];"));
   client.println(F("    const isErr = state === 'ERR', isOk = state === 'OK', isLow = state === 'LOW', isHigh = state === 'HIGH';"));
   client.println(F("    const info = sensorMap[label]; if (!info) return;"));
   client.println(F("    const el = document.getElementById('statusSensor' + label);"));
@@ -438,7 +445,11 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      el.querySelector('.sensor-dot').className = 'sensor-dot ' + info.idClass + (isErr ? ' dot-err' : !isOk ? ' dot-warn' : '');"));
   client.println(F("      const lbl = el.querySelector('.sensor-label'); lbl.className = 'sensor-label ' + info.idClass + (isErr ? ' sensor-err' : !isOk ? ' sensor-warn' : '');"));
   client.println(F("      if (isErr) { lbl.textContent = label + ' ERR'; el.querySelector('.sensor-temp').textContent = ''; }"));
-  client.println(F("      else { lbl.textContent = label; const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); const suffix = isLow ? ' \u2193 LOW' : isHigh ? ' \u2191 HIGH' : ' \u2713'; el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '°C (' + fVal + '°F)' + suffix; }"));
+  client.println(F("      else {"));
+  client.println(F("        lbl.textContent = label;"));
+  client.println(F("        if (activeTab === 'humid') { el.querySelector('.sensor-temp').textContent = parseFloat(humid).toFixed(1) + '% RH'; }"));
+  client.println(F("        else { const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); const suffix = isLow ? ' \u2193 LOW' : isHigh ? ' \u2191 HIGH' : ' \u2713'; el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '°C (' + fVal + '°F)' + suffix; }"));
+  client.println(F("      }"));
   client.println(F("    }"));
   client.println(F("    if (tempChart) { const ds = tempChart.data.datasets.find(d => d.label === 'Sensor ' + label); if (ds) { ds.borderColor = isErr ? '#e74c3c' : info.color; ds.backgroundColor = ds.borderColor; ds.pointBackgroundColor = ds.borderColor; } }"));
   client.println(F("  }); if (tempChart) tempChart.update();"));
@@ -486,14 +497,10 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  if (isOffline) return;"));
   client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value); let rangeH = parseInt(document.getElementById('humidRange').value);"));
   
-  // NEW: Define standard or date-inclusive time formats based on the dropdown selection
   client.println(F("  let timeFmtT = rangeT > 1 ? 'MMM d, h:mm a' : 'h:mm a'; let timeFmtH = rangeH > 1 ? 'MMM d, h:mm a' : 'h:mm a';"));
   
   client.println(F("  let tempData = await fetchData('temp.csv', rangeT); let humidData = await fetchData('humid.csv', rangeH);"));
 
-  // ==========================================
-  // ISOLATED CHART RENDERING - SHATTERED STRINGS FOR COMPILER SAFETY
-  // ==========================================
   client.println(F("  if (tempData.labels.length > 0) {"));
   client.println(F("    if(tempChart) tempChart.destroy();"));
   client.println(F("    tempChart = new Chart(document.getElementById('tempChart'), {"));
@@ -507,7 +514,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        {label: 'Low Threshold', data: Array(tempData.labels.length).fill(threshold - margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0}"));
   client.println(F("      ]},"));
   
-  // NEW: timeFmtT applied for dates, and grid color function added for solid midnight lines
   client.println(F("      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { left: 10, right: 20 } },"));
   client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmtT, minute: timeFmtT, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
   
@@ -530,7 +536,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4}"));
   client.println(F("      ]},"));
   
-  // NEW: timeFmtH applied for dates, and grid color function added for solid midnight lines
   client.println(F("      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { left: 10, right: 20 } },"));
   client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmtH, minute: timeFmtH, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
   
@@ -546,7 +551,6 @@ void serveRootPage(EthernetClient &client) {
 
   wdt_reset(); 
 
-  // Split massive SysInfo string so compiler handles it perfectly
   client.println(F("async function pollSysInfo() { if(isOffline) return; try { const res = await safeFetch('/sysinfo?t=' + new Date().getTime()); if(!res) return; const text = await res.text(); const pairs = {};"));
   client.println(F("  text.trim().split(',').forEach(p => { const i = p.indexOf(':'); if (i !== -1) pairs[p.substring(0,i).trim()] = p.substring(i+1).trim(); });"));
   client.println(F("  const ram = parseInt(pairs['RAM'] || 0); const ramColor = ram > 2000 ? '#2ecc71' : ram > 1000 ? '#f39c12' : '#e74c3c';"));
@@ -563,9 +567,7 @@ void serveRootPage(EthernetClient &client) {
   
   client.println(F("async function pollEvents() { if(isOffline) return; try { let res = await safeFetch('/events?t=' + new Date().getTime()); if (res && res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else if (res) { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) { handleDisconnect(); } }"));
 
-  // --- BOOT SEQUENCE & PRIME NUMBER TIMERS ---
   client.println(F("async function bootUp() {"));
-
   client.println(F("  document.getElementById('tempRange').addEventListener('change', updateCharts);"));
   client.println(F("  document.getElementById('humidRange').addEventListener('change', updateCharts);"));
 
@@ -577,13 +579,13 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    await pollEvents();"));
   client.println(F("  } catch(e) { console.log('Bootup interrupted, but UI active'); }"));
 
-  client.println(F("  setInterval(updateCharts, 307000);"));  // 5 mins and 7 seconds
-  client.println(F("  setInterval(pollStatus, 29000);"));     // 29 seconds
-  client.println(F("  setInterval(pollSysInfo, 31000);"));    // 31 seconds
-  client.println(F("  setInterval(pollThreshold, 37000);"));  // 37 seconds
-  client.println(F("  setInterval(pollEvents, 53000);"));     // 53 seconds
+  client.println(F("  setInterval(updateCharts, 307000);")); 
+  client.println(F("  setInterval(pollStatus, 29000);"));    
+  client.println(F("  setInterval(pollSysInfo, 31000);"));    
+  client.println(F("  setInterval(pollThreshold, 37000);"));  
+  client.println(F("  setInterval(pollEvents, 53000);"));     
   client.println(F("}"));
 
-  client.println(F("setTimeout(bootUp, 2000);")); // Let the Arduino catch its breath for 2 seconds!
+  client.println(F("setTimeout(bootUp, 2000);")); 
   client.println(F("</script></body></html>"));
 }

@@ -4,14 +4,47 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.16] — 2026-04-09
+
+### Added
+- **Humidity in status bar** — The sensor status bar now displays live humidity values when the Humidity tab is active (`XX.X% RH` per sensor), and returns to showing temperature (`XX.X°C / XX.X°F`) when any other tab is active. The last received status payload is cached in `lastStatus` so the bar re-renders immediately on tab switch without waiting for the next poll cycle
+- **`activeTab` tracking** — A JavaScript `activeTab` variable is set on every `showTab()` call, allowing `updateStatusBar()` to know which data type to display without re-fetching from the Arduino
+
+### Changed
+- **`/status` endpoint response format** — Now returns three pipe-separated fields per sensor: `LABEL:TEMP|STATE|HUMID` (e.g. `A:22.1|OK|45.3`). Previously returned `LABEL:TEMP|STATE` only. Humidity is appended as a raw float; `ERR` is returned if the humidity read failed
+- **`serveStatus()` in `storage.cpp`** — Now externs `hA`, `hB`, `hC`, `hD` and appends each sensor's humidity reading after the threshold state field
+
+---
+
+## [v1.15] — 2026-04-09
+
+### Added
+- **Midnight grid lines** — Both Temperature and Humidity charts now draw a bold dark vertical grid line (`rgba(0,0,0,0.6)`, 2px) at each midnight boundary when viewing multi-day ranges, making day transitions visually distinct from regular hourly grid lines (`rgba(0,0,0,0.1)`, 1px)
+- **Dynamic x-axis label format** — Tick labels on both charts now switch format based on the selected range: single-day view uses `h:mm a` (time only); multi-day views use `MMM d, h:mm a` (date + time), so the axis is never ambiguous regardless of zoom level
+
+### Changed
+- **Range dropdown defaults** — Both `tempRange` and `humidRange` selects now have explicit `value=` attributes on every `<option>` tag, ensuring `parseInt()` always reads the correct integer regardless of browser behavior
+- **SD read buffer increased** — `buf[64]` → `buf[128]` in `serveFile()` and the general file-serving path, halving the number of SD read/write cycles per response and reducing the risk of the watchdog timer triggering during large file transfers
+- **`appendCsvData()` watchdog coverage** — `wdt_reset()` added after each SD file close (`tf.close()` and `hf.close()`) inside `appendCsvData()`, providing additional watchdog coverage at the end of each write cycle in addition to the `wdt_disable()/wdt_enable()` wrapper already present in `loop()`
+
+---
+
+## [v1.14] — 2026-04-05
+
+### Added
+- **`wdt_disable()/wdt_enable()` around `appendCsvData()`** — SD card writes are now fully bracketed with watchdog disable/re-arm in `loop()`, preventing false watchdog reboots caused by slow SD cards during the 5-minute logging cycle
+- **Additional `wdt_reset()` checkpoints in `serveRootPage()`** — Ten watchdog checkpoint calls distributed throughout the large HTML generation function, preventing false reboots when serving the full dashboard page to a browser
+
+---
+
 ## [v1.13] — 2026-04-02
 
 ### Added
 - **Offline detection banner** — A yellow "SYSTEM OFFLINE" banner appears at the top of the dashboard if the Arduino stops responding. Automatically dismisses when the connection is restored
 - **Auto-reconnect** — `handleDisconnect()` and `checkReconnect()` retry the connection every 4 seconds after a failure, resuming polls automatically when the device comes back online
 - **`safeFetch()` wrapper** — All dashboard fetch calls now go through `safeFetch()`, which catches network errors, triggers the offline banner, and returns `null` safely instead of throwing unhandled exceptions
-- **Staggered poll timers** — Dashboard intervals offset to prevent simultaneous requests: `updateCharts` every 300s, `pollStatus` every 30s, `pollSysInfo` every 31s, `pollThreshold` every 32s, `pollEvents` every 59s
-- **`bootUp()` async init sequence** — Page load now awaits each poll in sequence (`updateCharts` → `pollStatus` → `pollSysInfo` → `pollThreshold` → `pollEvents`) before arming the repeating timers, preventing race conditions on first load
+- **Staggered poll timers** — Dashboard intervals offset to prevent simultaneous requests: `updateCharts` every 307s, `pollStatus` every 29s, `pollSysInfo` every 31s, `pollThreshold` every 37s, `pollEvents` every 53s
+- **`bootUp()` async init sequence** — Page load now awaits each poll in sequence (`updateCharts` → `pollStatus` → `pollSysInfo` → `pollThreshold` → `pollEvents`) before arming the repeating timers, preventing race conditions on first load. Range dropdown event listeners are also attached inside `bootUp()` before any fetches begin
 - **Empty data guard** — `updateCharts()` returns early if `tempData.labels.length === 0`, preventing a blank chart from destroying a previously-rendered chart when the device is briefly unreachable
 - **`EVENTS.txt` missing guard** — `serveFile()` now returns an empty `200 OK` instead of `404` when `EVENTS.txt` does not exist yet, preventing the Watchdog Alerts panel from showing an error on a fresh install
 
