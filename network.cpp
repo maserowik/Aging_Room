@@ -74,14 +74,6 @@ bool canAcceptConnection(IPAddress clientIP) {
 
   globalConnectionCount++;
 
-  // --- THESE PRINTS ARE NOW SILENCED ---
-  // Serial.print("Connection accepted. IP: ");
-  // Serial.print(clientIP);
-  // Serial.print(" | Global: ");
-  // Serial.print(globalConnectionCount);
-  // Serial.print("/");
-  // Serial.println(MAX_GLOBAL_CONNECTIONS);
-
   return true;
 }
 
@@ -98,14 +90,6 @@ void releaseConnection(IPAddress clientIP) {
       if (globalConnectionCount > 0) {
         globalConnectionCount--;
       }
-
-      // --- THESE PRINTS ARE NOW SILENCED ---
-      // Serial.print("Connection released. IP: ");
-      // Serial.print(clientIP);
-      // Serial.print(" | Global: ");
-      // Serial.print(globalConnectionCount);
-      // Serial.print("/");
-      // Serial.println(MAX_GLOBAL_CONNECTIONS);
       break;
     }
   }
@@ -178,49 +162,38 @@ void epochToDateTime(unsigned long epoch, int &year, int &month, int &day,
   weekday = (daysSince1970 + 4) % 7;
 }
 
-// Returns the day-of-month of the Nth occurrence of targetWeekday
-// (0=Sun..6=Sat) in the given month/year
-// Uses Tomohiko Sakamoto's algorithm to find weekday of the 1st of the month
 int nthWeekdayOfMonth(int year, int month, int targetWeekday, int n) {
   static int t[] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
   int y = year;
   if (month < 3) y--;
   int wdayOf1st = (y + y/4 - y/100 + y/400 + t[month-1] + 1) % 7;
 
-  // Days from 1st until first occurrence of targetWeekday
   int daysUntil = (targetWeekday - wdayOf1st + 7) % 7;
-  // Day of month of first occurrence
   int firstOccurrence = 1 + daysUntil;
-  // Day of month of nth occurrence
   return firstOccurrence + (n - 1) * 7;
 }
 
 bool isDST(int year, int month, int day, int hour) {
-  // US DST rules (Eastern Time):
-  // Starts: 2nd Sunday of March at 2:00 AM
-  // Ends:   1st Sunday of November at 2:00 AM
-
-  if (month < 3 || month > 11) return false;  // Jan, Feb, Dec — always EST
-  if (month > 3 && month < 11) return true;   // Apr through Oct — always EDT
+  if (month < 3 || month > 11) return false;  
+  if (month > 3 && month < 11) return true;   
 
   if (month == 3) {
-    int dstStart = nthWeekdayOfMonth(year, 3, 0, 2);  // 2nd Sunday of March
+    int dstStart = nthWeekdayOfMonth(year, 3, 0, 2);  
     if (day > dstStart) return true;
     if (day < dstStart) return false;
-    return hour >= 2;  // On transition day, EDT starts at 2:00 AM
+    return hour >= 2;  
   }
 
   if (month == 11) {
-    int dstEnd = nthWeekdayOfMonth(year, 11, 0, 1);   // 1st Sunday of November
+    int dstEnd = nthWeekdayOfMonth(year, 11, 0, 1);   
     if (day < dstEnd) return true;
     if (day > dstEnd) return false;
-    return hour < 2;   // On transition day, EST resumes at 2:00 AM
+    return hour < 2;   
   }
 
   return false;
 }
 
-// Attempt NTP sync from a single server, return true if successful
 bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
   Serial.print("Sending NTP request to ");
   Serial.print(serverName);
@@ -239,19 +212,16 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
       unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
       unsigned long lowWord  = word(packetBuffer[42], packetBuffer[43]);
       unsigned long epoch    = (highWord << 16) | lowWord;
-      epoch -= 2208988800UL;  // Convert NTP epoch to Unix epoch
+      epoch -= 2208988800UL;  
 
-      // Parse UTC time first to determine DST correctly
       int year, month, day, hour, minute, second, weekday;
       epochToDateTime(epoch, year, month, day, hour, minute, second, weekday);
 
-      // v1.10 fix: epochToDateTime returns 0-indexed month, isDST expects 1-indexed
       bool dstActive = isDST(year, month + 1, day, hour);
       int timeZoneOffset = dstActive ? -4 : -5;
       currentEpoch = epoch + (timeZoneOffset * 3600UL);
-      lastNtpEpoch = currentEpoch;  // Record time of successful sync
+      lastNtpEpoch = currentEpoch;  
 
-      // Re-parse local time for Serial Monitor display
       int lyear, lmonth, lday, lhour, lminute, lsecond, lweekday;
       epochToDateTime(currentEpoch, lyear, lmonth, lday, lhour, lminute, lsecond, lweekday);
 
@@ -273,6 +243,9 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
       Serial.println(lsecond);
       return true;
     }
+    
+    // FIXED: Small delay prevents the loop from locking up the processor
+    delay(10); 
   }
 
   Serial.print("NTP timeout from ");
@@ -281,11 +254,9 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
 }
 
 void requestNtpTime() {
-  // Primary: internal NTP server
   IPAddress primaryNTP(192, 168, 80, 8);
   if (tryNtpSync(primaryNTP, "192.168.80.8")) return;
 
-  // Fallback: public NTP pool
   IPAddress fallbackNTP(216, 239, 35, 0);
   if (tryNtpSync(fallbackNTP, "pool.ntp.org")) return;
 

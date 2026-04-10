@@ -14,7 +14,13 @@ bool checkAuth(String httpRequest) {
   
   // Decode Base64 credentials using decode_base64
   unsigned int decodedLength = decode_base64_length((unsigned char*)encodedCredentials.c_str());
-  unsigned char decodedCredentials[decodedLength + 1];
+  
+  // FIXED: Hardcoded 64-byte array to prevent stack overflow on the AVR architecture
+  unsigned char decodedCredentials[64];
+  
+  // FIXED: Ensure we don't overflow the fixed buffer
+  if (decodedLength > 63) return false;
+  
   decode_base64((unsigned char*)encodedCredentials.c_str(), decodedCredentials);
   decodedCredentials[decodedLength] = '\0';
   

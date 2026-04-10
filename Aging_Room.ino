@@ -8,7 +8,7 @@
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
+  while (!Serial  && millis() < 3000);
 
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
