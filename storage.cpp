@@ -220,7 +220,7 @@ void serveSystemInfo(EthernetClient &client) {
     epochToDateTime(writeEpoch, y, mo, d, h, mi, s, wd);
     const char* ampm = (h >= 12) ? "PM" : "AM";
     int displayHour = h % 12; if (displayHour == 0) displayHour = 12;
-    char buf[24]; snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
+    char buf[24]; snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
     client.print("LASTWRITE:"); client.print(buf);
   }
   client.print(",");
@@ -231,7 +231,7 @@ void serveSystemInfo(EthernetClient &client) {
     epochToDateTime(lastNtpEpoch, y, mo, d, h, mi, s, wd);
     const char* ampm = (h >= 12) ? "PM" : "AM";
     int displayHour = h % 12; if (displayHour == 0) displayHour = 12;
-    char buf[24]; snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
+    char buf[24]; snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
     client.print("NTPSYNC:"); client.print(buf);
   }
   client.println();
@@ -304,6 +304,7 @@ void serveRootPage(EthernetClient &client) {
     }
     client.print(F("</span></span>  "));
   }
+  client.println(F("  <span id='statusSensorAVG'></span>"));
   client.println(F("</div>"));
 
   client.println(F("<div>"));
@@ -358,6 +359,13 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("</div>"));
 
   client.println(F("<script>"));
+  client.println(F("function fmtD(d) {"));
+  client.println(F("  const p = n => (n < 10 ? '0' : '') + n;"));
+  client.println(F("  let h = d.getHours(), m = d.getMinutes(), s = d.getSeconds(), ap = h >= 12 ? 'PM' : 'AM';"));
+  client.println(F("  h = h % 12 || 12;"));
+  client.println(F("  return `${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()} ${p(h)}:${p(m)}:${p(s)} ${ap}`;"));
+  client.println(F("}"));
+
   client.println(F("let tempChart, humidChart; let activeTab = 'temp'; let lastStatus = [];"));
   client.print(F("let threshold = ")); client.print(tempThreshold, 1); client.println(F("; const margin = 5.0;"));
 
@@ -434,6 +442,7 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("function updateStatusBar(records) {"));
   client.println(F("  lastStatus = records;"));
+  client.println(F("  let sum = 0, count = 0;"));
   client.println(F("  records.forEach(rec => {"));
   client.println(F("    const colonIdx = rec.indexOf(':'); if (colonIdx === -1) return;"));
   client.println(F("    const label = rec.substring(0, colonIdx).trim(); const parts = rec.substring(colonIdx + 1).trim().split('|');"));
@@ -447,12 +456,29 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      if (isErr) { lbl.textContent = label + ' ERR'; el.querySelector('.sensor-temp').textContent = ''; }"));
   client.println(F("      else {"));
   client.println(F("        lbl.textContent = label;"));
-  client.println(F("        if (activeTab === 'humid') { el.querySelector('.sensor-temp').textContent = parseFloat(humid).toFixed(1) + '% RH'; }"));
-  client.println(F("        else { const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); const suffix = isLow ? ' \u2193 LOW' : isHigh ? ' \u2191 HIGH' : ' \u2713'; el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '°C (' + fVal + '°F)' + suffix; }"));
+  client.println(F("        if (activeTab === 'humid') { "));
+  client.println(F("          el.querySelector('.sensor-temp').textContent = parseFloat(humid).toFixed(1) + '% RH'; "));
+  client.println(F("          if (!isErr) { sum += parseFloat(humid); count++; }"));
+  client.println(F("        }"));
+  client.println(F("        else { "));
+  client.println(F("          const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); "));
+  client.println(F("          const suffix = isLow ? ' \\u2193 LOW' : isHigh ? ' \\u2191 HIGH' : ' \\u2713'; "));
+  client.println(F("          el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '°C (' + fVal + '°F)' + suffix; "));
+  client.println(F("          if (!isErr) { sum += cVal; count++; }"));
+  client.println(F("        }"));
   client.println(F("      }"));
   client.println(F("    }"));
   client.println(F("    if (tempChart) { const ds = tempChart.data.datasets.find(d => d.label === 'Sensor ' + label); if (ds) { ds.borderColor = isErr ? '#e74c3c' : info.color; ds.backgroundColor = ds.borderColor; ds.pointBackgroundColor = ds.borderColor; } }"));
-  client.println(F("  }); if (tempChart) tempChart.update();"));
+  client.println(F("  });"));
+  client.println(F("  const avgEl = document.getElementById('statusSensorAVG');"));
+  client.println(F("  if (avgEl && count > 0) {"));
+  client.println(F("    const avg = sum / count;"));
+  client.println(F("    let avgTxt = '';"));
+  client.println(F("    if (activeTab === 'humid') avgTxt = avg.toFixed(1) + '% RH';"));
+  client.println(F("    else avgTxt = avg.toFixed(1) + '°C (' + (avg * 9/5 + 32).toFixed(1) + '°F)';"));
+  client.println(F("    avgEl.innerHTML = \"  <span class='sensor-dot' style='background:#2C3E50;'></span><span class='sensor-label' style='color:#2C3E50;'>AVG</span><span class='sensor-temp'>\" + avgTxt + \"</span>  \";"));
+  client.println(F("  } else if (avgEl) { avgEl.innerHTML = ''; }"));
+  client.println(F("  if (tempChart) tempChart.update();"));
   client.println(F("}"));
 
   wdt_reset(); 
@@ -465,18 +491,27 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("async function fetchData(filename, rangeDays) {"));
   client.println(F("  let res = await safeFetch('/' + filename + '?t=' + new Date().getTime());"));
-  client.println(F("  if (!res || !res.ok) return {labels:[], sensorsA:[], sensorsB:[], sensorsC:[], sensorsD:[]};"));
+  client.println(F("  if (!res || !res.ok) return {labels:[], sensorsA:[], sensorsB:[], sensorsC:[], sensorsD:[], sensorsAvg:[]};"));
   client.println(F("  let text = await res.text(); let lines = text.trim().split('\\n').slice(1);"));
   client.println(F("  let limit = new Date().getTime() - rangeDays * 86400000;"));
-  client.println(F("  let labels=[], sensorsA=[], sensorsB=[], sensorsC=[], sensorsD=[];"));
+  client.println(F("  let labels=[], sensorsA=[], sensorsB=[], sensorsC=[], sensorsD=[], sensorsAvg=[];"));
   client.println(F("  let downsampleRate = rangeDays <= 1 ? 1 : rangeDays <= 3 ? 6 : 12;"));
   client.println(F("  lines.forEach((line, idx) => {"));
   client.println(F("    if (idx % downsampleRate !== 0) return;"));
   client.println(F("    let [date, time, a, b, c, d] = line.split(','); if (!date || !time) return;"));
   client.println(F("    let dtStr = date.split('-').join('/') + ' ' + time; let dt = new Date(dtStr);"));
-  client.println(F("    if(dt.getTime() >= limit){ labels.push(dt.getTime()); sensorsA.push(parseFloat(a) || null); sensorsB.push(parseFloat(b) || null); sensorsC.push(parseFloat(c) || null); sensorsD.push(parseFloat(d) || null); }"));
+  client.println(F("    if(dt.getTime() >= limit){"));
+  client.println(F("      labels.push(dt.getTime());"));
+  client.println(F("      let vA=parseFloat(a), vB=parseFloat(b), vC=parseFloat(c), vD=parseFloat(d);"));
+  client.println(F("      sensorsA.push(isNaN(vA) ? null : vA);"));
+  client.println(F("      sensorsB.push(isNaN(vB) ? null : vB);"));
+  client.println(F("      sensorsC.push(isNaN(vC) ? null : vC);"));
+  client.println(F("      sensorsD.push(isNaN(vD) ? null : vD);"));
+  client.println(F("      let valid = [vA,vB,vC,vD].filter(v=>!isNaN(v));"));
+  client.println(F("      sensorsAvg.push(valid.length > 0 ? (valid.reduce((s,v)=>s+v,0)/valid.length) : null);"));
+  client.println(F("    }"));
   client.println(F("  });"));
-  client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD};"));
+  client.println(F("  return {labels, sensorsA, sensorsB, sensorsC, sensorsD, sensorsAvg};"));
   client.println(F("}"));
 
   client.println(F("async function pollThreshold() { if(isOffline) return; try { let res = await safeFetch('/threshold?t=' + new Date().getTime()); if(res){ let val = parseFloat(await res.text()); if (!isNaN(val) && val !== threshold) { threshold = val; updateThresholdLines(); } } } catch(e) { handleDisconnect(); } }"));
@@ -484,9 +519,9 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("function updateThresholdLines() {"));
   client.println(F("  if (tempChart) { let len = tempChart.data.labels.length;"));
-  client.println(F("    tempChart.data.datasets[4].data = Array(len).fill(threshold);"));
-  client.println(F("    tempChart.data.datasets[5].data = Array(len).fill(threshold + margin);"));
-  client.println(F("    tempChart.data.datasets[6].data = Array(len).fill(threshold - margin);"));
+  client.println(F("    tempChart.data.datasets[5].data = Array(len).fill(threshold);"));
+  client.println(F("    tempChart.data.datasets[6].data = Array(len).fill(threshold + margin);"));
+  client.println(F("    tempChart.data.datasets[7].data = Array(len).fill(threshold - margin);"));
   client.println(F("    tempChart.update();"));
   client.println(F("  }"));
   client.println(F("}"));
@@ -497,7 +532,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  if (isOffline) return;"));
   client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value); let rangeH = parseInt(document.getElementById('humidRange').value);"));
   
-  client.println(F("  let timeFmtT = rangeT > 1 ? 'MMM d, h:mm a' : 'h:mm a'; let timeFmtH = rangeH > 1 ? 'MMM d, h:mm a' : 'h:mm a';"));
+  client.println(F("  let timeFmtT = 'MM/dd/yyyy hh:mm a'; let timeFmtH = 'MM/dd/yyyy hh:mm a';"));
   
   client.println(F("  let tempData = await fetchData('temp.csv', rangeT); let humidData = await fetchData('humid.csv', rangeH);"));
 
@@ -509,6 +544,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        {label: 'Sensor B', data: tempData.sensorsB, borderColor: '#E69F00', backgroundColor: '#E69F00', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor C', data: tempData.sensorsC, borderColor: '#CC79A7', backgroundColor: '#CC79A7', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor D', data: tempData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Average', data: tempData.sensorsAvg, borderColor: '#2C3E50', backgroundColor: '#2C3E50', fill: false, borderWidth: 3, borderDash: [15, 5], pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Threshold', data: Array(tempData.labels.length).fill(threshold), borderColor: 'black', borderDash: [5,5], pointRadius: 0},"));
   client.println(F("        {label: 'High Threshold', data: Array(tempData.labels.length).fill(threshold + margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0},"));
   client.println(F("        {label: 'Low Threshold', data: Array(tempData.labels.length).fill(threshold - margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0}"));
@@ -518,7 +554,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmtT, minute: timeFmtT, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
   
   client.println(F("      y: { title: { display: true, text: 'Celsius (°C)', font: { size: 13 } }, ticks: { stepSize: 1.0 } } },"));
-  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { mode: 'index', intersect: false },"));
+  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { mode: 'index', intersect: false, callbacks: { title: items => fmtD(new Date(items[0].parsed.x)) } },"));
   client.println(F("      legend: { labels: { boxWidth: 24, padding: 16, font: { size: 13 } }, onClick: function(e, legendItem, legend) { const index = legendItem.datasetIndex; const ci = legend.chart; if (ci.isDatasetVisible(index)) { ci.hide(index); } else { ci.show(index); } } },"));
   client.println(F("      zoom: typeof ChartZoom !== 'undefined' ? { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } : {} } }"));
   client.println(F("    });"));
@@ -533,14 +569,15 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        {label: 'Sensor A', data: humidData.sensorsA, borderColor: '#0072B2', backgroundColor: '#0072B2', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor B', data: humidData.sensorsB, borderColor: '#E69F00', backgroundColor: '#E69F00', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor C', data: humidData.sensorsC, borderColor: '#CC79A7', backgroundColor: '#CC79A7', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4}"));
+  client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Average', data: humidData.sensorsAvg, borderColor: '#2C3E50', backgroundColor: '#2C3E50', fill: false, borderWidth: 3, borderDash: [15, 5], pointRadius: 0, pointHoverRadius: 4}"));
   client.println(F("      ]},"));
   
   client.println(F("      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { left: 10, right: 20 } },"));
   client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmtH, minute: timeFmtH, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
   
   client.println(F("      y: { title: { display: true, text: 'Humidity (%)', font: { size: 13 } }, ticks: { stepSize: 1.0 } } },"));
-  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { mode: 'index', intersect: false },"));
+  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { mode: 'index', intersect: false, callbacks: { title: items => fmtD(new Date(items[0].parsed.x)) } },"));
   client.println(F("      legend: { labels: { boxWidth: 24, padding: 16, font: { size: 13 } }, onClick: function(e, legendItem, legend) { const index = legendItem.datasetIndex; const ci = legend.chart; if (ci.isDatasetVisible(index)) { ci.hide(index); } else { ci.show(index); } } },"));
   client.println(F("      zoom: typeof ChartZoom !== 'undefined' ? { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } : {} } }"));
   client.println(F("    });"));
@@ -561,7 +598,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  const ntpEl = document.getElementById('sysNtp'); if (ntpEl) ntpEl.innerHTML = '&#128336; NTP Sync: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['NTPSYNC'] || '--') + '</span>';"));
   client.println(F("} catch(e) { handleDisconnect(); } }"));
   
-  client.println(F("function updateLastUpdate() { document.getElementById('lastUpdate').textContent = new Date().toLocaleString(); }"));
+  client.println(F("function updateLastUpdate() { document.getElementById('lastUpdate').textContent = fmtD(new Date()); }"));
 
   client.println(F("async function clearEvents() { if (confirm('Clear alert history?')) { try { await fetch('/clear-events'); document.getElementById('eventList').innerHTML = '<li>No recent alerts.</li>'; } catch(e) { handleDisconnect(); } } }"));
   
