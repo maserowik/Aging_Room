@@ -1,6 +1,6 @@
 #include "sensors.h"
 #include "display.h"
-#include <avr/wdt.h>  // <-- NEW: Include Watchdog library
+#include <avr/wdt.h>
 
 // Global sensor objects
 DHT dhtA(40, DHTTYPE);
@@ -107,9 +107,8 @@ void handleButtonPress() {
   if (digitalRead(BUTTON_PIN) == LOW) {
     unsigned long holdStart = millis();
 
-    // Wait for 5 second hold or release
     while (digitalRead(BUTTON_PIN) == LOW) {
-      wdt_reset(); // <-- NEW: Pet dog during initial 5-second hold
+      wdt_reset();
       digitalWrite(RED_LED_PIN, (millis() / 250) % 2);
       digitalWrite(GREEN_LED_PIN, !((millis() / 250) % 2));
       if (millis() - holdStart >= 5000) break;
@@ -122,9 +121,8 @@ void handleButtonPress() {
 
       lcd.clear();
 
-      // Flash green 10 times to confirm entry
       for (int i = 0; i < 10; i++) {
-        wdt_reset(); // <-- NEW: Pet dog during 5-second LED flash
+        wdt_reset();
         digitalWrite(GREEN_LED_PIN, HIGH);
         digitalWrite(RED_LED_PIN, LOW);
         delay(250);
@@ -132,10 +130,9 @@ void handleButtonPress() {
         delay(250);
       }
 
-      // Adjustment loop — keep holding to scroll, release to save
       while (digitalRead(BUTTON_PIN) == LOW) {
-        wdt_reset(); // <-- NEW: Pet dog while user holds button to change temps
-        
+        wdt_reset();
+
         if (millis() - lastBlinkToggle >= 250) {
           blinkState = !blinkState;
           lastBlinkToggle = millis();
@@ -169,14 +166,12 @@ void handleButtonPress() {
         delay(50);
       }
 
-      // Save to EEPROM
       EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
       Serial.print("Threshold saved to EEPROM: ");
       Serial.println(tempThreshold);
 
-      // Flash red 10 times to confirm save
       for (int i = 0; i < 10; i++) {
-        wdt_reset(); // <-- NEW: Pet dog during 5-second red flash
+        wdt_reset();
         digitalWrite(RED_LED_PIN, HIGH);
         digitalWrite(GREEN_LED_PIN, LOW);
         delay(250);
@@ -184,10 +179,9 @@ void handleButtonPress() {
         delay(250);
       }
 
-      // Show old vs new for 10 seconds
       lcd.clear();
       for (int i = 0; i < 20; i++) {
-        wdt_reset(); // <-- NEW: Pet dog during 10-second success screen
+        wdt_reset();
         lcd.setCursor(0, 0);
         lcd.print("Threshold Updated ");
         lcd.setCursor(0, 2);

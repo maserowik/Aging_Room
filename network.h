@@ -33,10 +33,13 @@ void sendNTPpacket(IPAddress &address);
 bool tryNtpSync(IPAddress ntpIP, const char* serverName);
 void requestNtpTime();
 bool isLeapYear(int year);
-void epochToDateTime(unsigned long epoch, int &year, int &month, int &day, int &hour, int &minute, int &second, int &weekday);
+void epochToDateTime(unsigned long epoch, int &year, int &month, int &day,
+                     int &hour, int &minute, int &second, int &weekday);
 int nthWeekdayOfMonth(int year, int month, int targetWeekday, int n);
 bool isDST(int year, int month, int day, int hour);
-String getDateString();
-String getTimeString();
+
+// Buffer-based date/time — callers supply the buffer; no heap String allocation
+void getDateString(char* buf, size_t bufLen);  // buf must be >= 11 bytes: "MM-DD-YYYY\0"
+void getTimeString(char* buf, size_t bufLen);  // buf must be >=  9 bytes: "HH:MM:SS\0"
 
 #endif // NETWORK_H

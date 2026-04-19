@@ -58,7 +58,7 @@ void bootSequence() {
   lcd.print("System Getting Ready");
   lcd.setCursor(0, 2);
   lcd.print("Standby");
-  delay(3000);  // Reduced from 10000ms to 3000ms
+  delay(3000);
   lcd.clear();
 }
 

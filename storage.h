@@ -6,19 +6,16 @@
 #include <SD.h>
 #include <Ethernet.h>
 
-// Tell the Arduino that this timer variable exists in storage.cpp
+// Tracks time of last successful CSV write (set in appendCsvData)
 extern unsigned long lastCsvWrite;
 
-// Initialize the SD Card
+// Initialize the SD card; halts with error blink if it fails
 void initSDCard();
 
-// Create the CSV headers if the files don't exist
-void createCsvHeaderIfNeeded();
-
-// Write the current sensor data to the SD card
+// Write the current sensor readings to today's daily CSV files
 void appendCsvData();
 
-// Delete files that are exactly 180 days old
+// Delete log files older than 180 days (scans a 20-day window to catch gaps)
 void purgeOldLogs();
 
 // Web server route handlers
@@ -28,7 +25,7 @@ void serveStatus(EthernetClient &client);
 void serveSystemInfo(EthernetClient &client);
 void serveRootPage(EthernetClient &client);
 
-// Measure free RAM
+// Returns free heap+stack space in bytes
 int freeMemory();
 
 #endif

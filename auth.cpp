@@ -4,58 +4,58 @@
 bool checkAuth(String httpRequest) {
   int authIndex = httpRequest.indexOf("Authorization: Basic ");
   if (authIndex == -1) return false;
-  
+
   int startIndex = authIndex + 21;
   int endIndex = httpRequest.indexOf('\r', startIndex);
   if (endIndex == -1) endIndex = httpRequest.indexOf('\n', startIndex);
-  
-  String encodedCredentials = httpRequest.substring(startIndex, endIndex);
-  encodedCredentials.trim();
-  
-  // Decode Base64 credentials using decode_base64
-  unsigned int decodedLength = decode_base64_length((unsigned char*)encodedCredentials.c_str());
-  
-  // FIXED: Hardcoded 64-byte array to prevent stack overflow on the AVR architecture
-  unsigned char decodedCredentials[64];
-  
-  // FIXED: Ensure we don't overflow the fixed buffer
+
+  // Copy encoded credentials into a fixed char buffer — no heap String allocation
+  char encodedBuf[128];
+  int encLen = endIndex - startIndex;
+  if (encLen <= 0 || encLen >= (int)sizeof(encodedBuf)) return false;
+  httpRequest.substring(startIndex, endIndex).toCharArray(encodedBuf, sizeof(encodedBuf));
+
+  // Trim trailing whitespace in-place
+  int trimIdx = strlen(encodedBuf) - 1;
+  while (trimIdx >= 0 && (encodedBuf[trimIdx] == ' ' || encodedBuf[trimIdx] == '\r' || encodedBuf[trimIdx] == '\n')) {
+    encodedBuf[trimIdx--] = '\0';
+  }
+
+  // Decode Base64 into a fixed buffer — no heap allocation
+  unsigned int decodedLength = decode_base64_length((unsigned char*)encodedBuf);
   if (decodedLength > 63) return false;
-  
-  decode_base64((unsigned char*)encodedCredentials.c_str(), decodedCredentials);
-  decodedCredentials[decodedLength] = '\0';
-  
-  String credentials = String((char*)decodedCredentials);
-  int colonIndex = credentials.indexOf(':');
-  if (colonIndex == -1) return false;
-  
-  String username = credentials.substring(0, colonIndex);
-  String password = credentials.substring(colonIndex + 1);
-  
-  // Check username
-  if (!username.equals(AUTH_USERNAME)) return false;
-  
-  // Hash the provided password with salt and compare to stored hash
-  // SECURITY: This implements salted SHA256 hashing to prevent rainbow table attacks
-  // The salt is prepended to the password before hashing
+
+  unsigned char decodedBuf[64];
+  decode_base64((unsigned char*)encodedBuf, decodedBuf);
+  decodedBuf[decodedLength] = '\0';
+
+  // Find the colon separator without allocating Strings
+  char* colonPtr = strchr((char*)decodedBuf, ':');
+  if (colonPtr == NULL) return false;
+
+  // Split into username and password using pointer arithmetic
+  *colonPtr = '\0';
+  const char* username = (char*)decodedBuf;
+  const char* password = colonPtr + 1;
+
+  // Check username with constant-time-safe strcmp (username is not secret, this is fine)
+  if (strcmp(username, AUTH_USERNAME) != 0) return false;
+
+  // Hash salt+password with SHA256 and compare to stored hash
   SHA256 sha256;
   sha256.reset();
-  
-  // Add salt first (prepend method)
   sha256.update((const byte*)AUTH_SALT, strlen(AUTH_SALT));
-  
-  // Add password
-  sha256.update((const byte*)password.c_str(), password.length());
-  
+  sha256.update((const byte*)password, strlen(password));
+
   byte hash[32];
   sha256.finalize(hash, 32);
-  
-  // Convert hash to hex string
+
+  // Convert hash to hex string in a fixed buffer
   char hashHex[65];
   for (int i = 0; i < 32; i++) {
     sprintf(&hashHex[i * 2], "%02x", hash[i]);
   }
   hashHex[64] = '\0';
-  
-  // Compare with stored SHA256 hash
-  return String(hashHex).equals(String(AUTH_PASSWORD_SHA256));
+
+  return (strcmp(hashHex, AUTH_PASSWORD_SHA256) == 0);
 }

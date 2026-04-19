@@ -1,4 +1,5 @@
 #include "network.h"
+#include <avr/wdt.h>
 
 // Global variables
 byte mac[] = { 0xA8, 0x61, 0xDA, 0xAE, 0xE1, 0x24 };
@@ -7,7 +8,7 @@ EthernetServer server(SERVER_PORT);
 byte packetBuffer[NTP_PACKET_SIZE];
 unsigned long currentEpoch = 0;
 unsigned long lastNtpCheck = 0;
-unsigned long lastNtpEpoch = 0;  // Local epoch at time of last successful NTP sync
+unsigned long lastNtpEpoch = 0;
 ConnectionTracker connectionTrackers[CONNECTION_TRACKING_SIZE];
 uint8_t globalConnectionCount = 0;
 
@@ -25,7 +26,12 @@ void cleanupStaleConnections() {
   for (int i = 0; i < CONNECTION_TRACKING_SIZE; i++) {
     if (connectionTrackers[i].activeConnections > 0 &&
         (now - connectionTrackers[i].lastConnectionTime > CONNECTION_TIMEOUT)) {
-      globalConnectionCount -= connectionTrackers[i].activeConnections;
+      // Guard against globalConnectionCount underflow before subtracting
+      if (globalConnectionCount >= connectionTrackers[i].activeConnections) {
+        globalConnectionCount -= connectionTrackers[i].activeConnections;
+      } else {
+        globalConnectionCount = 0;
+      }
       connectionTrackers[i].activeConnections = 0;
       connectionTrackers[i].ip = IPAddress(0, 0, 0, 0);
     }
@@ -73,7 +79,6 @@ bool canAcceptConnection(IPAddress clientIP) {
   }
 
   globalConnectionCount++;
-
   return true;
 }
 
@@ -157,7 +162,7 @@ void epochToDateTime(unsigned long epoch, int &year, int &month, int &day,
   day = days + 1;
 
   // weekday: 0=Sunday, 1=Monday, ..., 6=Saturday
-  // January 1 1970 was a Thursday = 4
+  // January 1, 1970 was a Thursday = 4
   unsigned long daysSince1970 = epoch / 86400UL;
   weekday = (daysSince1970 + 4) % 7;
 }
@@ -174,21 +179,21 @@ int nthWeekdayOfMonth(int year, int month, int targetWeekday, int n) {
 }
 
 bool isDST(int year, int month, int day, int hour) {
-  if (month < 3 || month > 11) return false;  
-  if (month > 3 && month < 11) return true;   
+  if (month < 3 || month > 11) return false;
+  if (month > 3 && month < 11) return true;
 
   if (month == 3) {
-    int dstStart = nthWeekdayOfMonth(year, 3, 0, 2);  
+    int dstStart = nthWeekdayOfMonth(year, 3, 0, 2);
     if (day > dstStart) return true;
     if (day < dstStart) return false;
-    return hour >= 2;  
+    return hour >= 2;
   }
 
   if (month == 11) {
-    int dstEnd = nthWeekdayOfMonth(year, 11, 0, 1);   
+    int dstEnd = nthWeekdayOfMonth(year, 11, 0, 1);
     if (day < dstEnd) return true;
     if (day > dstEnd) return false;
-    return hour < 2;   
+    return hour < 2;
   }
 
   return false;
@@ -205,6 +210,7 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
 
   unsigned long start = millis();
   while (millis() - start < 3000) {
+    wdt_reset();
     int size = Udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
       Serial.println("NTP response received!");
@@ -212,7 +218,7 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
       unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
       unsigned long lowWord  = word(packetBuffer[42], packetBuffer[43]);
       unsigned long epoch    = (highWord << 16) | lowWord;
-      epoch -= 2208988800UL;  
+      epoch -= 2208988800UL;
 
       int year, month, day, hour, minute, second, weekday;
       epochToDateTime(epoch, year, month, day, hour, minute, second, weekday);
@@ -220,7 +226,7 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
       bool dstActive = isDST(year, month + 1, day, hour);
       int timeZoneOffset = dstActive ? -4 : -5;
       currentEpoch = epoch + (timeZoneOffset * 3600UL);
-      lastNtpEpoch = currentEpoch;  
+      lastNtpEpoch = currentEpoch;
 
       int lyear, lmonth, lday, lhour, lminute, lsecond, lweekday;
       epochToDateTime(currentEpoch, lyear, lmonth, lday, lhour, lminute, lsecond, lweekday);
@@ -228,24 +234,17 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
       Serial.print("DST Active: ");
       Serial.println(dstActive ? "Yes (EDT)" : "No (EST)");
       Serial.print("Local Date & Time: ");
-      Serial.print(lmonth + 1);
-      Serial.print("-");
-      Serial.print(lday);
-      Serial.print("-");
-      Serial.print(lyear);
-      Serial.print(" ");
-      Serial.print(lhour);
-      Serial.print(":");
+      Serial.print(lmonth + 1); Serial.print("-");
+      Serial.print(lday);       Serial.print("-");
+      Serial.print(lyear);      Serial.print(" ");
+      Serial.print(lhour);      Serial.print(":");
       if (lminute < 10) Serial.print("0");
-      Serial.print(lminute);
-      Serial.print(":");
+      Serial.print(lminute);    Serial.print(":");
       if (lsecond < 10) Serial.print("0");
       Serial.println(lsecond);
       return true;
     }
-    
-    // FIXED: Small delay prevents the loop from locking up the processor
-    delay(10); 
+    delay(10);
   }
 
   Serial.print("NTP timeout from ");
@@ -263,18 +262,16 @@ void requestNtpTime() {
   Serial.println("NTP sync failed on all servers.");
 }
 
-String getDateString() {
+// Writes date as MM-DD-YYYY into caller-supplied buffer (must be >= 11 bytes)
+void getDateString(char* buf, size_t bufLen) {
   int year, month, day, hour, minute, second, weekday;
   epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
-  char buffer[11];
-  snprintf(buffer, sizeof(buffer), "%02d-%02d-%04d", month + 1, day, year);
-  return String(buffer);
+  snprintf(buf, bufLen, "%02d-%02d-%04d", month + 1, day, year);
 }
 
-String getTimeString() {
+// Writes time as HH:MM:SS into caller-supplied buffer (must be >= 9 bytes)
+void getTimeString(char* buf, size_t bufLen) {
   int year, month, day, hour, minute, second, weekday;
   epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
-  char buffer[9];
-  snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", hour, minute, second);
-  return String(buffer);
+  snprintf(buf, bufLen, "%02d:%02d:%02d", hour, minute, second);
 }

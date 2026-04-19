@@ -8,6 +8,11 @@
 
 extern LiquidCrystal_I2C lcd;
 
+// Tracks whether the SD card initialized successfully.
+// Set once in initSDCard(). Used by serveSystemInfo() to report SD health
+// without calling SD.begin() again mid-operation.
+static bool sdOk = false;
+
 int freeMemory() {
   extern int __heap_start, *__brkval;
   int v;
@@ -17,7 +22,8 @@ int freeMemory() {
 unsigned long lastCsvWrite = 0;
 
 void initSDCard() {
-  if (!SD.begin(SD_CHIP_SELECT)) {
+  sdOk = SD.begin(SD_CHIP_SELECT);
+  if (!sdOk) {
     Serial.println("SD card initialization failed!");
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -27,14 +33,14 @@ void initSDCard() {
       delay(500);
       digitalWrite(RED_LED_PIN, LOW);
       delay(500);
-      wdt_reset(); 
+      wdt_reset();
     }
   } else {
     Serial.println("SD card initialized.");
   }
 }
 
-void createCsvHeaderIfNeeded() { }
+// Removed: createCsvHeaderIfNeeded() — dead stub superseded by ensureDailyHeader()
 
 void ensureDailyHeader(const char* filename) {
   if (!SD.exists(filename)) {
@@ -57,47 +63,58 @@ void appendCsvData() {
   ensureDailyHeader(tFile);
   ensureDailyHeader(hFile);
 
-  String dateStr = getDateString();
-  String timeStr = getTimeString();
+  // Build date and time strings in fixed buffers — no heap String allocation
+  char dateStr[11]; getDateString(dateStr, sizeof(dateStr));
+  char timeStr[9];  getTimeString(timeStr, sizeof(timeStr));
 
   extern float tA, tB, tC, tD, hA, hB, hC, hD;
 
+  // --- Temperature file ---
   File tf = SD.open(tFile, FILE_WRITE);
   if (tf) {
-    tf.print(dateStr + "," + timeStr + ",");
-    tf.print(isnan(tA) ? "ERR" : String(tA, 1) + " C"); tf.print(",");
-    tf.print(isnan(tB) ? "ERR" : String(tB, 1) + " C"); tf.print(",");
-    tf.print(isnan(tC) ? "ERR" : String(tC, 1) + " C"); tf.print(",");
-    tf.println(isnan(tD) ? "ERR" : String(tD, 1) + " C");
+    tf.print(dateStr); tf.print(","); tf.print(timeStr); tf.print(",");
+    if (isnan(tA)) tf.print("ERR"); else { tf.print(tA, 1); tf.print(" C"); } tf.print(",");
+    if (isnan(tB)) tf.print("ERR"); else { tf.print(tB, 1); tf.print(" C"); } tf.print(",");
+    if (isnan(tC)) tf.print("ERR"); else { tf.print(tC, 1); tf.print(" C"); } tf.print(",");
+    if (isnan(tD)) tf.println("ERR"); else { tf.print(tD, 1); tf.println(" C"); }
     tf.close();
     wdt_reset();
+  } else {
+    Serial.print("ERROR: Could not open "); Serial.println(tFile);
   }
 
+  // --- Humidity file ---
   File hf = SD.open(hFile, FILE_WRITE);
   if (hf) {
-    hf.print(dateStr + "," + timeStr + ",");
-    hf.print(isnan(hA) ? "ERR" : String(hA, 1) + " %"); hf.print(",");
-    hf.print(isnan(hB) ? "ERR" : String(hB, 1) + " %"); hf.print(",");
-    hf.print(isnan(hC) ? "ERR" : String(hC, 1) + " %"); hf.print(",");
-    hf.println(isnan(hD) ? "ERR" : String(hD, 1) + " %");
+    hf.print(dateStr); hf.print(","); hf.print(timeStr); hf.print(",");
+    if (isnan(hA)) hf.print("ERR"); else { hf.print(hA, 1); hf.print(" %"); } hf.print(",");
+    if (isnan(hB)) hf.print("ERR"); else { hf.print(hB, 1); hf.print(" %"); } hf.print(",");
+    if (isnan(hC)) hf.print("ERR"); else { hf.print(hC, 1); hf.print(" %"); } hf.print(",");
+    if (isnan(hD)) hf.println("ERR"); else { hf.print(hD, 1); hf.println(" %"); }
     hf.close();
     wdt_reset();
+  } else {
+    Serial.print("ERROR: Could not open "); Serial.println(hFile);
   }
 }
 
 void purgeOldLogs() {
   extern unsigned long currentEpoch;
-  if (currentEpoch < 1000000000UL) return; 
+  if (currentEpoch < EPOCH_VALID_THRESHOLD) return;
 
-  unsigned long purgeEpoch = currentEpoch - (180UL * 86400UL); 
-  int y, mo, d, h, mi, s, wd;
-  epochToDateTime(purgeEpoch, y, mo, d, h, mi, s, wd);
-  
-  char tFile[13]; snprintf(tFile, sizeof(tFile), "%02d%02d%02d_T.csv", y % 100, mo + 1, d);
-  char hFile[13]; snprintf(hFile, sizeof(hFile), "%02d%02d%02d_H.csv", y % 100, mo + 1, d);
-  
-  if (SD.exists(tFile)) SD.remove(tFile);
-  if (SD.exists(hFile)) SD.remove(hFile);
+  // Scan a window of days (180–200) to catch any files missed while the
+  // system was offline. Deleting non-existent files is a no-op on the SD lib.
+  for (int offset = 180; offset <= 200; offset++) {
+    unsigned long purgeEpoch = currentEpoch - ((unsigned long)offset * 86400UL);
+    int y, mo, d, h, mi, s, wd;
+    epochToDateTime(purgeEpoch, y, mo, d, h, mi, s, wd);
+
+    char tFile[13]; snprintf(tFile, sizeof(tFile), "%02d%02d%02d_T.csv", y % 100, mo + 1, d);
+    char hFile[13]; snprintf(hFile, sizeof(hFile), "%02d%02d%02d_H.csv", y % 100, mo + 1, d);
+
+    if (SD.exists(tFile)) { SD.remove(tFile); Serial.print("Purged: "); Serial.println(tFile); }
+    if (SD.exists(hFile)) { SD.remove(hFile); Serial.print("Purged: "); Serial.println(hFile); }
+  }
 }
 
 void serveFile(EthernetClient &client, const char *filename, const char *contentType) {
@@ -128,13 +145,14 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
       if (SD.exists(fn)) {
         File f = SD.open(fn, FILE_READ);
         if (f) {
-          while(f.available()) { wdt_reset(); if (f.read() == '\n') break; } 
-          
-          byte buf[128]; 
-          while(f.available()) { 
+          // Skip the header line
+          while (f.available()) { wdt_reset(); if (f.read() == '\n') break; }
+
+          byte buf[128];
+          while (f.available()) {
             int n = f.read(buf, sizeof(buf));
             client.write(buf, n);
-            wdt_reset(); 
+            wdt_reset();
           }
           f.close();
         }
@@ -148,12 +166,12 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
     client.println("HTTP/1.1 200 OK");
     client.print("Content-Type: "); client.println(contentType);
     client.println("Connection: close\n");
-    
-    byte buf[128]; 
-    while (file.available()) { 
+
+    byte buf[128];
+    while (file.available()) {
       int n = file.read(buf, sizeof(buf));
-      client.write(buf, n); 
-      wdt_reset(); 
+      client.write(buf, n);
+      wdt_reset();
     }
     file.close();
   } else {
@@ -173,23 +191,24 @@ void serveStatus(EthernetClient &client) {
   extern float tempThreshold;
   client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n");
   const char* labels[] = {"A", "B", "C", "D"};
-  float temps[] = {tA, tB, tC, tD};
+  float temps[]  = {tA, tB, tC, tD};
   float humids[] = {hA, hB, hC, hD};
-  
+
   for (int i = 0; i < 4; i++) {
     if (i > 0) client.print(",");
     client.print(labels[i]); client.print(":");
-    
-    if (isnan(temps[i])) { client.print("ERR|ERR"); } 
-    else {
+
+    if (isnan(temps[i])) {
+      client.print("ERR|ERR");
+    } else {
       client.print(temps[i], 1); client.print("|");
-      if (temps[i] < tempThreshold - THRESHOLD_MARGIN) client.print("LOW");
+      if (temps[i] < tempThreshold - THRESHOLD_MARGIN)      client.print("LOW");
       else if (temps[i] > tempThreshold + THRESHOLD_MARGIN) client.print("HIGH");
-      else client.print("OK");
+      else                                                   client.print("OK");
     }
     client.print("|");
-    if (isnan(humids[i])) { client.print("ERR"); }
-    else { client.print(humids[i], 1); }
+    if (isnan(humids[i])) client.print("ERR");
+    else                  client.print(humids[i], 1);
   }
   client.println();
 }
@@ -197,49 +216,64 @@ void serveStatus(EthernetClient &client) {
 void serveSystemInfo(EthernetClient &client) {
   extern unsigned long lastNtpEpoch;
   extern unsigned long lastCsvWrite;
+  extern unsigned long currentEpoch;
 
   client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n");
+
   int ram = freeMemory();
   client.print("RAM:"); client.print(ram); client.print(",");
 
-  unsigned long ms = millis();
+  unsigned long ms   = millis();
   unsigned long secs = ms / 1000;
   unsigned long mins = secs / 60;
   unsigned long hours = mins / 60;
-  unsigned long days = hours / 24;
+  unsigned long days  = hours / 24;
   client.print("UPTIME:"); client.print(days); client.print("d ");
-  client.print(hours % 24); client.print("h "); client.print(mins % 60); client.print("m,");
-  client.print("SD:"); client.print(SD.begin(SD_CHIP_SELECT) ? "OK" : "FAIL"); client.print(",");
+  client.print(hours % 24); client.print("h ");
+  client.print(mins % 60);  client.print("m,");
 
-  if (lastCsvWrite == 0) { client.print("LASTWRITE:Never"); } 
-  else {
-    extern unsigned long currentEpoch;
-    unsigned long secsAgo = (millis() - lastCsvWrite) / 1000;
+  // FIXED: report the flag set at init — never re-call SD.begin() here
+  client.print("SD:"); client.print(sdOk ? "OK" : "FAIL"); client.print(",");
+
+  if (lastCsvWrite == 0) {
+    client.print("LASTWRITE:Never");
+  } else {
+    unsigned long secsAgo  = (millis() - lastCsvWrite) / 1000;
     unsigned long writeEpoch = currentEpoch - secsAgo;
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(writeEpoch, y, mo, d, h, mi, s, wd);
     const char* ampm = (h >= 12) ? "PM" : "AM";
     int displayHour = h % 12; if (displayHour == 0) displayHour = 12;
-    char buf[24]; snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
+    char buf[28];
+    snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
     client.print("LASTWRITE:"); client.print(buf);
   }
   client.print(",");
 
-  if (lastNtpEpoch == 0) { client.print("NTPSYNC:Never"); } 
-  else {
+  if (lastNtpEpoch == 0) {
+    client.print("NTPSYNC:Never");
+  } else {
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(lastNtpEpoch, y, mo, d, h, mi, s, wd);
     const char* ampm = (h >= 12) ? "PM" : "AM";
     int displayHour = h % 12; if (displayHour == 0) displayHour = 12;
-    char buf[24]; snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
+    char buf[28];
+    snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
     client.print("NTPSYNC:"); client.print(buf);
   }
   client.println();
 }
 
 void serveRootPage(EthernetClient &client) {
-  String lastUpdate = getDateString() + " " + getTimeString();
+  // Build the "last update" string in fixed buffers — no heap String allocation
+  char dateStr[11]; getDateString(dateStr, sizeof(dateStr));
+  char timeStr[9];  getTimeString(timeStr, sizeof(timeStr));
+  // Combined "MM-DD-YYYY HH:MM:SS" for the page header
+  char lastUpdate[22];
+  snprintf(lastUpdate, sizeof(lastUpdate), "%s %s", dateStr, timeStr);
+
   extern float tempThreshold;
+  // FIXED: renamed from tC to avoid shadowing the global Sensor C variable (tC)
   extern float tA, tB, tC, tD;
 
   client.println(F("HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: close\n"));
@@ -259,13 +293,13 @@ void serveRootPage(EthernetClient &client) {
   client.println(F(".dot-warn{background:#f39c12;} .dot-err{background:#e74c3c; animation: errorBlink 1s infinite;}"));
   client.println(F(".sensor-label{font-weight:bold;} .sensor-warn{color:#f39c12;} .sensor-err{color:#e74c3c; animation: errorBlink 1s infinite;}"));
   client.println(F(".sensor-temp{color:#555;font-size:14px;margin-left:4px;}"));
-  
-  wdt_reset(); 
 
-  client.println(F(".sensor-dot.s-a{background:#0072B2;} .sensor-label.s-a{color:#0072B2;}")); 
-  client.println(F(".sensor-dot.s-b{background:#E69F00;} .sensor-label.s-b{color:#E69F00;}")); 
-  client.println(F(".sensor-dot.s-c{background:#CC79A7;} .sensor-label.s-c{color:#CC79A7;}")); 
-  client.println(F(".sensor-dot.s-d{background:#56B4E9;} .sensor-label.s-d{color:#56B4E9;}")); 
+  wdt_reset();
+
+  client.println(F(".sensor-dot.s-a{background:#0072B2;} .sensor-label.s-a{color:#0072B2;}"));
+  client.println(F(".sensor-dot.s-b{background:#E69F00;} .sensor-label.s-b{color:#E69F00;}"));
+  client.println(F(".sensor-dot.s-c{background:#CC79A7;} .sensor-label.s-c{color:#CC79A7;}"));
+  client.println(F(".sensor-dot.s-d{background:#56B4E9;} .sensor-label.s-d{color:#56B4E9;}"));
   client.println(F("</style>"));
   client.println(F("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"));
   client.println(F("<script src='https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js'></script>"));
@@ -280,27 +314,42 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("</strong></div>"));
 
   client.println(F("<div id='statusBar'><strong>Sensors:</strong>"));
-  const char* sensorLabels[] = {"A", "B", "C", "D"};
+
+  const char* sensorLabels[]   = {"A", "B", "C", "D"};
   const char* sensorIdClasses[] = {"s-a", "s-b", "s-c", "s-d"};
+  // FIXED: use a local array for the loop — no variable named tC to shadow the global
   float initTemps[] = {tA, tB, tC, tD};
-  
+
   for (int i = 0; i < 4; i++) {
-    wdt_reset(); 
-    bool isErr = isnan(initTemps[i]);
-    bool isLow = !isErr && initTemps[i] < tempThreshold - THRESHOLD_MARGIN;
+    wdt_reset();
+    bool isErr  = isnan(initTemps[i]);
+    bool isLow  = !isErr && initTemps[i] < tempThreshold - THRESHOLD_MARGIN;
     bool isHigh = !isErr && initTemps[i] > tempThreshold + THRESHOLD_MARGIN;
-    bool isOk = !isErr && !isLow && !isHigh;
+    bool isOk   = !isErr && !isLow && !isHigh;
+
     client.print(F("  <span id='statusSensor")); client.print(sensorLabels[i]);
     client.print(F("'><span class='sensor-dot ")); client.print(sensorIdClasses[i]);
-    if (isErr) client.print(F(" dot-err")); else if (!isOk) client.print(F(" dot-warn"));
+    if (isErr)       client.print(F(" dot-err"));
+    else if (!isOk)  client.print(F(" dot-warn"));
     client.print(F("'></span><span class='sensor-label ")); client.print(sensorIdClasses[i]);
-    if (isErr) client.print(F(" sensor-err")); else if (!isOk) client.print(F(" sensor-warn"));
+    if (isErr)       client.print(F(" sensor-err"));
+    else if (!isOk)  client.print(F(" sensor-warn"));
     client.print(F("'>")); client.print(sensorLabels[i]);
-    if (isErr) { client.print(F(" ERR")); } else {
-      float tC = initTemps[i]; float tF = tC * 9.0 / 5.0 + 32.0;
-      client.print(F("</span><span class='sensor-temp'>")); client.print(tC, 1);
-      client.print(F("°C (")); client.print(tF, 1); client.print(F("°F)"));
-      if (isLow) client.print(F(" ↓ LOW")); else if (isHigh) client.print(F(" ↑ HIGH")); else client.print(F(" ✓"));
+
+    // FIXED: the inner local variable is now named tCelsius, not tC
+    if (isErr) {
+      client.print(F(" ERR</span><span class='sensor-temp'>"));
+    } else {
+      float tCelsius = initTemps[i];
+      float tFahrenheit = tCelsius * 9.0f / 5.0f + 32.0f;
+      client.print(F("</span><span class='sensor-temp'>"));
+      client.print(tCelsius, 1);
+      client.print(F("\xC2\xB0""C ("));   // °C
+      client.print(tFahrenheit, 1);
+      client.print(F("\xC2\xB0""F)"));    // °F
+      if (isLow)       client.print(F(" \xe2\x86\x93 LOW"));   // ↓
+      else if (isHigh) client.print(F(" \xe2\x86\x91 HIGH"));  // ↑
+      else             client.print(F(" \xe2\x9c\x93"));        // ✓
     }
     client.print(F("</span></span>  "));
   }
@@ -313,7 +362,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("<div class='tab' onclick=\"showTab('archive', event)\">Archive Data</div>"));
   client.println(F("</div>"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("<div id='temp' class='tab-content active'>"));
   client.println(F("<label>Range: <select id='tempRange'><option value='1' selected>1</option><option value='3'>3</option><option value='5'>5</option><option value='7'>7</option></select> days</label>"));
@@ -340,7 +389,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    <span id='dlProgress' style='margin-left: 10px; font-weight: bold; color: #27ae60;'></span>"));
   client.println(F("  </div></div>"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
   client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;display:flex;justify-content:space-between;'><span>System Status</span>"));
@@ -369,7 +418,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("let tempChart, humidChart; let activeTab = 'temp'; let lastStatus = [];"));
   client.print(F("let threshold = ")); client.print(tempThreshold, 1); client.println(F("; const margin = 5.0;"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("let isOffline = false; let failedPings = 0;"));
   client.println(F("const warnBanner = document.createElement('div');"));
@@ -401,7 +450,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  link.download = label + '_chart.png'; link.href = chart.toBase64Image(); link.click();"));
   client.println(F("}"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("async function downloadDateRange() {"));
   client.println(F("  if (isOffline) return;"));
@@ -412,10 +461,8 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  if (d1 > d2) { alert('Start date must be BEFORE End date.'); return; }"));
   client.println(F("  const diffDays = Math.round((d2 - d1) / 86400000);"));
   client.println(F("  if (diffDays > 180) { alert('Max 6 months allowed.'); return; }"));
-  
   client.println(F("  btn.disabled = true; btn.style.backgroundColor = '#95a5a6';"));
   client.println(F("  let combinedCsv = 'Date,Time,Sensor A,Sensor B,Sensor C,Sensor D\\n'; let filesFound = 0;"));
-  
   client.println(F("  for (let i = 0; i <= diffDays; i++) {"));
   client.println(F("    if (isOffline) break;"));
   client.println(F("    let curr = new Date(d1.getTime() + (i * 86400000));"));
@@ -423,9 +470,8 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    let filename = y + m + d + '_' + dataType + '.csv'; progress.innerText = 'Fetching day ' + (i + 1) + ' of ' + (diffDays + 1) + '...';"));
   client.println(F("    try { let res = await safeFetch('/archive?file=' + filename); if (res && res.ok) { let text = await res.text(); let lines = text.trim().split('\\n');"));
   client.println(F("    if (lines.length > 1) { combinedCsv += lines.slice(1).join('\\n') + '\\n'; filesFound++; } } } catch(e) { console.log('Skip ' + filename); }"));
-  client.println(F("    await new Promise(resolve => setTimeout(resolve, 100));")); 
+  client.println(F("    await new Promise(resolve => setTimeout(resolve, 100));"));
   client.println(F("  }"));
-  
   client.println(F("  btn.disabled = false; btn.style.backgroundColor = '#2980b9'; progress.innerText = 'Done!'; setTimeout(() => progress.innerText = '', 3000);"));
   client.println(F("  if (filesFound === 0) { alert('No data found.'); return; }"));
   client.println(F("  const blob = new Blob([combinedCsv], { type: 'text/csv' }); const url = window.URL.createObjectURL(blob);"));
@@ -434,7 +480,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  a.click(); window.URL.revokeObjectURL(url);"));
   client.println(F("}"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("async function safeEject() { if(confirm('STOP LOGGING AND UNMOUNT SD CARD?\\nYou MUST physically unplug and reboot the Arduino to resume logging.')) { try { await fetch('/eject'); document.body.innerHTML = '<div style=\"text-align:center;margin-top:100px;\"><h1 style=\"color:#e74c3c;\">System Halted Safely</h1><p>The SD card has been unmounted.</p><p>You may now safely unplug the power.</p></div>'; } catch(e) { handleDisconnect(); } } }"));
 
@@ -442,7 +488,7 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("function updateStatusBar(records) {"));
   client.println(F("  lastStatus = records;"));
-  client.println(F("  let sum = 0, count = 0;"));
+  client.println(F("  let sumT = 0, sumH = 0, count = 0;"));
   client.println(F("  records.forEach(rec => {"));
   client.println(F("    const colonIdx = rec.indexOf(':'); if (colonIdx === -1) return;"));
   client.println(F("    const label = rec.substring(0, colonIdx).trim(); const parts = rec.substring(colonIdx + 1).trim().split('|');"));
@@ -456,35 +502,34 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("      if (isErr) { lbl.textContent = label + ' ERR'; el.querySelector('.sensor-temp').textContent = ''; }"));
   client.println(F("      else {"));
   client.println(F("        lbl.textContent = label;"));
-  client.println(F("        if (activeTab === 'humid') { "));
-  client.println(F("          el.querySelector('.sensor-temp').textContent = parseFloat(humid).toFixed(1) + '% RH'; "));
-  client.println(F("          if (!isErr) { sum += parseFloat(humid); count++; }"));
-  client.println(F("        }"));
-  client.println(F("        else { "));
-  client.println(F("          const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1); "));
-  client.println(F("          const suffix = isLow ? ' \\u2193 LOW' : isHigh ? ' \\u2191 HIGH' : ' \\u2713'; "));
-  client.println(F("          el.querySelector('.sensor-temp').textContent = cVal.toFixed(1) + '°C (' + fVal + '°F)' + suffix; "));
-  client.println(F("          if (!isErr) { sum += cVal; count++; }"));
-  client.println(F("        }"));
+  client.println(F("        const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1);"));
+  client.println(F("        const suffix = isLow ? ' \\u2193 LOW' : isHigh ? ' \\u2191 HIGH' : ' \\u2713';"));
+  client.println(F("        const tStr = cVal.toFixed(1) + '\u00B0C (' + fVal + '\u00B0F)' + suffix;"));
+  client.println(F("        const hStr = parseFloat(humid).toFixed(1) + '% RH';"));
+  client.println(F("        if (activeTab === 'humid') { el.querySelector('.sensor-temp').textContent = hStr; }"));
+  client.println(F("        else if (activeTab === 'archive') { el.querySelector('.sensor-temp').innerHTML = tStr + ' &nbsp;|&nbsp; ' + hStr; }"));
+  client.println(F("        else { el.querySelector('.sensor-temp').textContent = tStr; }"));
+  client.println(F("        if (!isErr) { sumT += cVal; sumH += parseFloat(humid); count++; }"));
   client.println(F("      }"));
   client.println(F("    }"));
   client.println(F("    if (tempChart) { const ds = tempChart.data.datasets.find(d => d.label === 'Sensor ' + label); if (ds) { ds.borderColor = isErr ? '#e74c3c' : info.color; ds.backgroundColor = ds.borderColor; ds.pointBackgroundColor = ds.borderColor; } }"));
   client.println(F("  });"));
   client.println(F("  const avgEl = document.getElementById('statusSensorAVG');"));
   client.println(F("  if (avgEl && count > 0) {"));
-  client.println(F("    const avg = sum / count;"));
+  client.println(F("    const aT = sumT / count, aH = sumH / count;"));
   client.println(F("    let avgTxt = '';"));
-  client.println(F("    if (activeTab === 'humid') avgTxt = avg.toFixed(1) + '% RH';"));
-  client.println(F("    else avgTxt = avg.toFixed(1) + '°C (' + (avg * 9/5 + 32).toFixed(1) + '°F)';"));
-  client.println(F("    avgEl.innerHTML = \"  <span class='sensor-dot' style='background:#2C3E50;'></span><span class='sensor-label' style='color:#2C3E50;'>AVG</span><span class='sensor-temp'>\" + avgTxt + \"</span>  \";"));
+  client.println(F("    if (activeTab === 'humid') avgTxt = aH.toFixed(1) + '% RH';"));
+  client.println(F("    else if (activeTab === 'archive') avgTxt = aT.toFixed(1) + '\u00B0C (' + (aT * 9/5 + 32).toFixed(1) + '\u00B0F) &nbsp;|&nbsp; ' + aH.toFixed(1) + '% RH';"));
+  client.println(F("    else avgTxt = aT.toFixed(1) + '\u00B0C (' + (aT * 9/5 + 32).toFixed(1) + '\u00B0F)';"));
+  client.println(F("    avgEl.innerHTML = \"  <span class='sensor-dot' style='background:#000;'></span><span class='sensor-label' style='color:#000;'>AVG</span><span class='sensor-temp'>\" + avgTxt + \"</span>  \";"));
   client.println(F("  } else if (avgEl) { avgEl.innerHTML = ''; }"));
   client.println(F("  if (tempChart) tempChart.update();"));
   client.println(F("}"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("async function safeFetch(url) {"));
-  client.println(F("  if (isOffline && !url.includes('/status')) return null;")); 
+  client.println(F("  if (isOffline && !url.includes('/status')) return null;"));
   client.println(F("  try { let res = await fetch(url); if (!res.ok && res.status !== 404 && res.status !== 401) throw new Error('Bad Network'); failedPings = 0; return res; }"));
   client.println(F("  catch (e) { handleDisconnect(); return null; }"));
   client.println(F("}"));
@@ -526,14 +571,12 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  }"));
   client.println(F("}"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("async function updateCharts(){"));
   client.println(F("  if (isOffline) return;"));
   client.println(F("  let rangeT = parseInt(document.getElementById('tempRange').value); let rangeH = parseInt(document.getElementById('humidRange').value);"));
-  
-  client.println(F("  let timeFmtT = 'MM/dd/yyyy hh:mm a'; let timeFmtH = 'MM/dd/yyyy hh:mm a';"));
-  
+  client.println(F("  let timeFmt = 'MM/dd/yyyy hh:mm a';"));
   client.println(F("  let tempData = await fetchData('temp.csv', rangeT); let humidData = await fetchData('humid.csv', rangeH);"));
 
   client.println(F("  if (tempData.labels.length > 0) {"));
@@ -544,23 +587,21 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        {label: 'Sensor B', data: tempData.sensorsB, borderColor: '#E69F00', backgroundColor: '#E69F00', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor C', data: tempData.sensorsC, borderColor: '#CC79A7', backgroundColor: '#CC79A7', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor D', data: tempData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Average', data: tempData.sensorsAvg, borderColor: '#2C3E50', backgroundColor: '#2C3E50', fill: false, borderWidth: 3, borderDash: [15, 5], pointRadius: 0, pointHoverRadius: 4},"));
+  client.println(F("        {label: 'Average', data: tempData.sensorsAvg, borderColor: '#000000', backgroundColor: '#000000', fill: false, borderWidth: 3, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Threshold', data: Array(tempData.labels.length).fill(threshold), borderColor: 'black', borderDash: [5,5], pointRadius: 0},"));
   client.println(F("        {label: 'High Threshold', data: Array(tempData.labels.length).fill(threshold + margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0},"));
   client.println(F("        {label: 'Low Threshold', data: Array(tempData.labels.length).fill(threshold - margin), borderColor: 'gray', borderDash: [2,2], pointRadius: 0}"));
   client.println(F("      ]},"));
-  
   client.println(F("      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { left: 10, right: 20 } },"));
-  client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmtT, minute: timeFmtT, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
-  
-  client.println(F("      y: { title: { display: true, text: 'Celsius (°C)', font: { size: 13 } }, ticks: { stepSize: 1.0 } } },"));
-  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { mode: 'index', intersect: false, callbacks: { title: items => fmtD(new Date(items[0].parsed.x)) } },"));
+  client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmt, minute: timeFmt, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
+  client.println(F("      y: { title: { display: true, text: 'Celsius (\u00B0C)', font: { size: 13 } }, ticks: { stepSize: 1.0 } } },"));
+  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { backgroundColor: 'rgba(255,255,255,0.95)', titleColor: '#000', bodyColor: '#000', borderColor: '#ccc', borderWidth: 1, mode: 'index', intersect: false, callbacks: { title: items => fmtD(new Date(items[0].parsed.x)) } },"));
   client.println(F("      legend: { labels: { boxWidth: 24, padding: 16, font: { size: 13 } }, onClick: function(e, legendItem, legend) { const index = legendItem.datasetIndex; const ci = legend.chart; if (ci.isDatasetVisible(index)) { ci.hide(index); } else { ci.show(index); } } },"));
   client.println(F("      zoom: typeof ChartZoom !== 'undefined' ? { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } : {} } }"));
   client.println(F("    });"));
   client.println(F("  }"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("  if (humidData.labels.length > 0) {"));
   client.println(F("    if(humidChart) humidChart.destroy();"));
@@ -570,14 +611,12 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("        {label: 'Sensor B', data: humidData.sensorsB, borderColor: '#E69F00', backgroundColor: '#E69F00', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor C', data: humidData.sensorsC, borderColor: '#CC79A7', backgroundColor: '#CC79A7', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
   client.println(F("        {label: 'Sensor D', data: humidData.sensorsD, borderColor: '#56B4E9', backgroundColor: '#56B4E9', fill: false, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4},"));
-  client.println(F("        {label: 'Average', data: humidData.sensorsAvg, borderColor: '#2C3E50', backgroundColor: '#2C3E50', fill: false, borderWidth: 3, borderDash: [15, 5], pointRadius: 0, pointHoverRadius: 4}"));
+  client.println(F("        {label: 'Average', data: humidData.sensorsAvg, borderColor: '#000000', backgroundColor: '#000000', fill: false, borderWidth: 3, pointRadius: 0, pointHoverRadius: 4}"));
   client.println(F("      ]},"));
-  
   client.println(F("      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { left: 10, right: 20 } },"));
-  client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmtH, minute: timeFmtH, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
-  
+  client.println(F("      scales: { x: { type: 'time', time: { tooltipFormat: 'MM/dd/yyyy h:mm a', displayFormats: { hour: timeFmt, minute: timeFmt, day: 'MMM d' } }, ticks: { maxRotation: 45, minRotation: 45, maxTicksLimit: 24, font: { size: 10 } }, grid: { color: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.1)', lineWidth: c => (c.tick && c.tick.value && new Date(c.tick.value).getHours()===0 && new Date(c.tick.value).getMinutes()===0) ? 2 : 1 } },"));
   client.println(F("      y: { title: { display: true, text: 'Humidity (%)', font: { size: 13 } }, ticks: { stepSize: 1.0 } } },"));
-  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { mode: 'index', intersect: false, callbacks: { title: items => fmtD(new Date(items[0].parsed.x)) } },"));
+  client.println(F("      interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { backgroundColor: 'rgba(255,255,255,0.95)', titleColor: '#000', bodyColor: '#000', borderColor: '#ccc', borderWidth: 1, mode: 'index', intersect: false, callbacks: { title: items => fmtD(new Date(items[0].parsed.x)) } },"));
   client.println(F("      legend: { labels: { boxWidth: 24, padding: 16, font: { size: 13 } }, onClick: function(e, legendItem, legend) { const index = legendItem.datasetIndex; const ci = legend.chart; if (ci.isDatasetVisible(index)) { ci.hide(index); } else { ci.show(index); } } },"));
   client.println(F("      zoom: typeof ChartZoom !== 'undefined' ? { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } : {} } }"));
   client.println(F("    });"));
@@ -586,7 +625,7 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  setTimeout(pollStatus, 500); updateLastUpdate();"));
   client.println(F("}"));
 
-  wdt_reset(); 
+  wdt_reset();
 
   client.println(F("async function pollSysInfo() { if(isOffline) return; try { const res = await safeFetch('/sysinfo?t=' + new Date().getTime()); if(!res) return; const text = await res.text(); const pairs = {};"));
   client.println(F("  text.trim().split(',').forEach(p => { const i = p.indexOf(':'); if (i !== -1) pairs[p.substring(0,i).trim()] = p.substring(i+1).trim(); });"));
@@ -597,32 +636,30 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  const wrEl = document.getElementById('sysWrite'); if (wrEl) wrEl.innerHTML = '&#128221; Last Write: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['LASTWRITE'] || '--') + '</span>';"));
   client.println(F("  const ntpEl = document.getElementById('sysNtp'); if (ntpEl) ntpEl.innerHTML = '&#128336; NTP Sync: <span style=\"color:#27ae60; font-weight:bold;\">' + (pairs['NTPSYNC'] || '--') + '</span>';"));
   client.println(F("} catch(e) { handleDisconnect(); } }"));
-  
+
   client.println(F("function updateLastUpdate() { document.getElementById('lastUpdate').textContent = fmtD(new Date()); }"));
 
   client.println(F("async function clearEvents() { if (confirm('Clear alert history?')) { try { await fetch('/clear-events'); document.getElementById('eventList').innerHTML = '<li>No recent alerts.</li>'; } catch(e) { handleDisconnect(); } } }"));
-  
+
   client.println(F("async function pollEvents() { if(isOffline) return; try { let res = await safeFetch('/events?t=' + new Date().getTime()); if (res && res.ok) { let text = await res.text(); let lines = text.trim().split('\\n').filter(l => l.trim().length > 0); let last5 = lines.slice(-5).reverse(); let html = ''; if (last5.length === 0) { html = '<li>No recent alerts.</li>'; } else { last5.forEach(l => html += '<li>' + l + '</li>'); } document.getElementById('eventList').innerHTML = html; } else if (res) { document.getElementById('eventList').innerHTML = '<li>No alert log found on SD card yet.</li>'; } } catch(e) { handleDisconnect(); } }"));
 
   client.println(F("async function bootUp() {"));
   client.println(F("  document.getElementById('tempRange').addEventListener('change', updateCharts);"));
   client.println(F("  document.getElementById('humidRange').addEventListener('change', updateCharts);"));
-
   client.println(F("  try {"));
-  client.println(F("    await updateCharts();")); 
+  client.println(F("    await updateCharts();"));
   client.println(F("    await pollStatus();"));
   client.println(F("    await pollSysInfo();"));
   client.println(F("    await pollThreshold();"));
   client.println(F("    await pollEvents();"));
   client.println(F("  } catch(e) { console.log('Bootup interrupted, but UI active'); }"));
-
-  client.println(F("  setInterval(updateCharts, 307000);")); 
-  client.println(F("  setInterval(pollStatus, 29000);"));    
-  client.println(F("  setInterval(pollSysInfo, 31000);"));    
-  client.println(F("  setInterval(pollThreshold, 37000);"));  
-  client.println(F("  setInterval(pollEvents, 53000);"));     
+  client.println(F("  setInterval(updateCharts, 307000);"));
+  client.println(F("  setInterval(pollStatus, 29000);"));
+  client.println(F("  setInterval(pollSysInfo, 31000);"));
+  client.println(F("  setInterval(pollThreshold, 37000);"));
+  client.println(F("  setInterval(pollEvents, 53000);"));
   client.println(F("}"));
 
-  client.println(F("setTimeout(bootUp, 2000);")); 
+  client.println(F("setTimeout(bootUp, 2000);"));
   client.println(F("</script></body></html>"));
 }

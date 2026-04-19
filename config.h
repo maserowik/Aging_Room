@@ -53,12 +53,14 @@
 
 // Authentication
 #define AUTH_USERNAME "Seegrid"
-//#define AUTH_SALT "SeegridAgingRoom2026"  // CHANGE THIS to your unique salt
 #define AUTH_SALT "216_Aging_Room"
-//#define AUTH_PASSWORD_SHA256 "8b3d7f4a1c2e9f6b5a8d3c1e4f7a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1d4e7f0a"
 #define AUTH_PASSWORD_SHA256 "73c7fb3c9a3521a178e61bba9009b21179e95bf9ab8b3c891fc5036bc9f490c8"
 
 // Temperature Threshold
 #define THRESHOLD_MARGIN 5.0
+
+// Sentinel value: epoch values above this indicate a valid NTP sync has occurred.
+// Unix timestamp 1,000,000,000 = September 9, 2001 — safely before any real deployment date.
+#define EPOCH_VALID_THRESHOLD 1000000000UL
 
 #endif // CONFIG_H
