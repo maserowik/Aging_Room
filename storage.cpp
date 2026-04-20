@@ -63,7 +63,7 @@ void appendCsvData() {
   ensureDailyHeader(hFile);
 
   // Build date/time strings directly — no String heap allocation
-  char dateStr[12]; snprintf(dateStr, sizeof(dateStr), "%02d-%02d-%04d", month + 1, day, year);
+  char dateStr[12]; snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d", year, month + 1, day);
   char timeStr[9];  snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", hour, minute, second);
 
   extern float tA, tB, tC, tD, hA, hB, hC, hD;
@@ -226,9 +226,7 @@ void serveSystemInfo(EthernetClient &client) {
     unsigned long writeEpoch = currentEpoch - secsAgo;
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(writeEpoch, y, mo, d, h, mi, s, wd);
-    const char* ampm = (h >= 12) ? "PM" : "AM";
-    int displayHour = h % 12; if (displayHour == 0) displayHour = 12;
-    char buf[24]; snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
+    char buf[20]; snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", y, mo+1, d, h, mi, s);
     client.print("LASTWRITE:"); client.print(buf);
   }
   client.print(",");
@@ -237,9 +235,7 @@ void serveSystemInfo(EthernetClient &client) {
   else {
     int y, mo, d, h, mi, s, wd;
     epochToDateTime(lastNtpEpoch, y, mo, d, h, mi, s, wd);
-    const char* ampm = (h >= 12) ? "PM" : "AM";
-    int displayHour = h % 12; if (displayHour == 0) displayHour = 12;
-    char buf[24]; snprintf(buf, sizeof(buf), "%02d-%02d-%04d %d:%02d:%02d %s", mo+1, d, y, displayHour, mi, s, ampm);
+    char buf[20]; snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", y, mo+1, d, h, mi, s);
     client.print("NTPSYNC:"); client.print(buf);
   }
   client.println();
@@ -249,8 +245,8 @@ void serveRootPage(EthernetClient &client) {
   extern unsigned long currentEpoch;
   int _y, _mo, _d, _h, _mi, _s, _wd;
   epochToDateTime(currentEpoch, _y, _mo, _d, _h, _mi, _s, _wd);
-  char lastUpdate[22];
-  snprintf(lastUpdate, sizeof(lastUpdate), "%02d-%02d-%04d %02d:%02d:%02d", _mo + 1, _d, _y, _h, _mi, _s);
+  char lastUpdate[20];
+  snprintf(lastUpdate, sizeof(lastUpdate), "%04d-%02d-%02d %02d:%02d:%02d", _y, _mo + 1, _d, _h, _mi, _s);
   extern float tempThreshold;
   extern float tA, tB, tC, tD;
 
