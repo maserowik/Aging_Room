@@ -5,17 +5,21 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Ethernet.h>
+#include "network.h"   // Required for getDateString() and getTimeString()
 
-// Tracks time of last successful CSV write (set in appendCsvData)
+// Tell the Arduino that this timer variable exists in storage.cpp
 extern unsigned long lastCsvWrite;
 
-// Initialize the SD card; halts with error blink if it fails
+// Initialize the SD Card
 void initSDCard();
 
-// Write the current sensor readings to today's daily CSV files
+// Create the CSV headers if the files don't exist
+void createCsvHeaderIfNeeded();
+
+// Write the current sensor data to the SD card
 void appendCsvData();
 
-// Delete log files older than 180 days (scans a 20-day window to catch gaps)
+// Delete files that are exactly 180 days old
 void purgeOldLogs();
 
 // Web server route handlers
@@ -25,7 +29,7 @@ void serveStatus(EthernetClient &client);
 void serveSystemInfo(EthernetClient &client);
 void serveRootPage(EthernetClient &client);
 
-// Returns free heap+stack space in bytes
+// Measure free RAM
 int freeMemory();
 
 #endif

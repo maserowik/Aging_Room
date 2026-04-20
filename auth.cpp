@@ -1,56 +1,54 @@
 #include "auth.h"
 #include <base64.hpp>  // Only include here to avoid multiple definition errors
 
-bool checkAuth(String httpRequest) {
-  int authIndex = httpRequest.indexOf("Authorization: Basic ");
-  if (authIndex == -1) return false;
+bool checkAuth(const char* authLine) {
+  // Find "Authorization: Basic " in the raw header line
+  const char* marker = strstr(authLine, "Authorization: Basic ");
+  if (!marker) return false;
 
-  int startIndex = authIndex + 21;
-  int endIndex = httpRequest.indexOf('\r', startIndex);
-  if (endIndex == -1) endIndex = httpRequest.indexOf('\n', startIndex);
+  const char* encoded = marker + 21;
 
-  // Copy encoded credentials into a fixed char buffer — no heap String allocation
-  char encodedBuf[128];
-  int encLen = endIndex - startIndex;
-  if (encLen <= 0 || encLen >= (int)sizeof(encodedBuf)) return false;
-  httpRequest.substring(startIndex, endIndex).toCharArray(encodedBuf, sizeof(encodedBuf));
-
-  // Trim trailing whitespace in-place
-  int trimIdx = strlen(encodedBuf) - 1;
-  while (trimIdx >= 0 && (encodedBuf[trimIdx] == ' ' || encodedBuf[trimIdx] == '\r' || encodedBuf[trimIdx] == '\n')) {
-    encodedBuf[trimIdx--] = '\0';
+  // Find end of the Base64 token (stop at \r, \n, or \0)
+  uint8_t encodedLen = 0;
+  while (encoded[encodedLen] && encoded[encodedLen] != '\r' && encoded[encodedLen] != '\n') {
+    encodedLen++;
   }
+  if (encodedLen == 0) return false;
 
-  // Decode Base64 into a fixed buffer — no heap allocation
+  // Decode Base64 into a fixed buffer
+  // Base64 expands at 4:3 ratio; 88 encoded chars → 66 decoded (plenty for user:pass)
+  char encodedBuf[88];
+  if (encodedLen >= sizeof(encodedBuf)) return false;
+  memcpy(encodedBuf, encoded, encodedLen);
+  encodedBuf[encodedLen] = '\0';
+
   unsigned int decodedLength = decode_base64_length((unsigned char*)encodedBuf);
-  if (decodedLength > 63) return false;
+  if (decodedLength >= 64) return false;   // Sanity check — reject oversized credentials
 
   unsigned char decodedBuf[64];
   decode_base64((unsigned char*)encodedBuf, decodedBuf);
   decodedBuf[decodedLength] = '\0';
 
-  // Find the colon separator without allocating Strings
-  char* colonPtr = strchr((char*)decodedBuf, ':');
-  if (colonPtr == NULL) return false;
-
-  // Split into username and password using pointer arithmetic
-  *colonPtr = '\0';
+  // Split "username:password" at the colon
+  char* colon = strchr((char*)decodedBuf, ':');
+  if (!colon) return false;
+  *colon = '\0';                          // Terminate username in-place
   const char* username = (char*)decodedBuf;
-  const char* password = colonPtr + 1;
+  const char* password = colon + 1;
 
-  // Check username with constant-time-safe strcmp (username is not secret, this is fine)
+  // Check username
   if (strcmp(username, AUTH_USERNAME) != 0) return false;
 
-  // Hash salt+password with SHA256 and compare to stored hash
+  // Hash salt+password with SHA256
   SHA256 sha256;
   sha256.reset();
   sha256.update((const byte*)AUTH_SALT, strlen(AUTH_SALT));
-  sha256.update((const byte*)password, strlen(password));
+  sha256.update((const byte*)password,  strlen(password));
 
   byte hash[32];
   sha256.finalize(hash, 32);
 
-  // Convert hash to hex string in a fixed buffer
+  // Convert hash bytes to hex string in a fixed buffer
   char hashHex[65];
   for (int i = 0; i < 32; i++) {
     sprintf(&hashHex[i * 2], "%02x", hash[i]);

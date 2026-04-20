@@ -5,6 +5,8 @@
 #include <Ethernet.h>
 
 // Authentication function
-bool checkAuth(String httpRequest);
+// Accepts the raw "Authorization: Basic ..." header line as a C-string.
+// Returns true if credentials are valid, false otherwise.
+bool checkAuth(const char* authLine);
 
 #endif // AUTH_H
