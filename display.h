@@ -6,7 +6,7 @@
 
 // External variables
 extern LiquidCrystal_I2C lcd;
-extern int displayMode;
+extern int displayMode;           // 0-5: cycles through all three rooms
 extern unsigned long lastDisplaySwitch;
 
 // Function prototypes

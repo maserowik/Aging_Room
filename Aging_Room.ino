@@ -103,6 +103,7 @@ void loop() {
 
   handleButtonPress();
   readSensors();
+  readRS485();
   updateLEDs();
   updateDisplay();
   
@@ -273,6 +274,46 @@ void loop() {
             SD.remove("humid.csv");
             client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nSUCCESS: Old temp.csv and humid.csv have been deleted!");
           }
+
+          // --- Skit Room endpoints ---
+          else if (strncmp(httpRequest, "GET /skit/status",         16) == 0) serveSkitStatus(client);
+          else if (strncmp(httpRequest, "GET /skit/sysinfo",        17) == 0) serveSkitSysInfo(client);
+          else if (strncmp(httpRequest, "GET /skit/threshold/temp", 24) == 0) serveSkitThresholdTemp(client);
+          else if (strncmp(httpRequest, "GET /skit/threshold/humid",25) == 0) serveSkitThresholdHumid(client);
+          else if (strncmp(httpRequest, "POST /skit/threshold/temp", 25) == 0) {
+            // Value passed as query string: POST /skit/threshold/temp?v=22.5
+            const char* q = strchr(httpRequest + 25, '=');
+            if (q) { extern float skitTempThreshold; skitTempThreshold = atof(q + 1); EEPROM.put(EEPROM_SKIT_TEMP_THRESHOLD_ADDR, skitTempThreshold); }
+            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+          }
+          else if (strncmp(httpRequest, "POST /skit/threshold/humid", 26) == 0) {
+            const char* q = strchr(httpRequest + 26, '=');
+            if (q) { extern float skitHumidThreshold; skitHumidThreshold = atof(q + 1); EEPROM.put(EEPROM_SKIT_HUMID_THRESHOLD_ADDR, skitHumidThreshold); }
+            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+          }
+          else if (strncmp(httpRequest, "GET /skit/temp.csv",  18) == 0) serveFile(client, "SK_T.csv",  "text/csv");
+          else if (strncmp(httpRequest, "GET /skit/humid.csv", 19) == 0) serveFile(client, "SK_H.csv",  "text/csv");
+          else if (strncmp(httpRequest, "GET /skit ",           9) == 0) serveSkitPage(client);
+
+          // --- Camera Room endpoints ---
+          else if (strncmp(httpRequest, "GET /camera/status",         18) == 0) serveCameraStatus(client);
+          else if (strncmp(httpRequest, "GET /camera/sysinfo",        19) == 0) serveCameraSysInfo(client);
+          else if (strncmp(httpRequest, "GET /camera/threshold/temp", 26) == 0) serveCameraThresholdTemp(client);
+          else if (strncmp(httpRequest, "GET /camera/threshold/humid",27) == 0) serveCameraThresholdHumid(client);
+          else if (strncmp(httpRequest, "POST /camera/threshold/temp", 27) == 0) {
+            const char* q = strchr(httpRequest + 27, '=');
+            if (q) { extern float camTempThreshold; camTempThreshold = atof(q + 1); EEPROM.put(EEPROM_CAM_TEMP_THRESHOLD_ADDR, camTempThreshold); }
+            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+          }
+          else if (strncmp(httpRequest, "POST /camera/threshold/humid", 28) == 0) {
+            const char* q = strchr(httpRequest + 28, '=');
+            if (q) { extern float camHumidThreshold; camHumidThreshold = atof(q + 1); EEPROM.put(EEPROM_CAM_HUMID_THRESHOLD_ADDR, camHumidThreshold); }
+            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+          }
+          else if (strncmp(httpRequest, "GET /camera/temp.csv",  20) == 0) serveFile(client, "CA_T.csv",  "text/csv");
+          else if (strncmp(httpRequest, "GET /camera/humid.csv", 21) == 0) serveFile(client, "CA_H.csv",  "text/csv");
+          else if (strncmp(httpRequest, "GET /camera ",          11) == 0) serveCameraPage(client);
+
           else if (strncmp(httpRequest, "GET / ", 6) == 0) serveRootPage(client);
           else {
             client.println("HTTP/1.1 404 Not Found\nConnection: close\n");

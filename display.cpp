@@ -4,7 +4,13 @@
 // Global LCD object
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-// Display state
+// Display state — 0-5 cycles through all three rooms
+// 0 = Aging Room Temperature
+// 1 = Aging Room Humidity
+// 2 = Skit Room Temperature + Humidity
+// 3 = Skit Room Threshold Status
+// 4 = Camera Room Temperature + Humidity
+// 5 = Camera Room Threshold Status
 int displayMode = 0;
 unsigned long lastDisplaySwitch = 0;
 
@@ -62,51 +68,161 @@ void bootSequence() {
   lcd.clear();
 }
 
+// Helper — prints a float value or ERR/-- depending on state
+// col/row = cursor position, width = total field width to pad/clear
+static void printSensorVal(float val, int col, int row, const char* unit) {
+  lcd.setCursor(col, row);
+  if (isnan(val)) {
+    lcd.print("ERR  ");
+  } else {
+    // Print value with 1 decimal place followed by unit
+    char buf[8];
+    dtostrf(val, 4, 1, buf);
+    lcd.print(buf);
+    lcd.print(unit);
+  }
+}
+
+// Helper — prints threshold status: OK, LOW, HIGH, or ERR
+static void printThreshStatus(float val, float threshold, float margin, int col, int row) {
+  lcd.setCursor(col, row);
+  if (isnan(val)) {
+    lcd.print("ERR  ");
+  } else if (val < threshold - margin) {
+    lcd.print("LOW  ");
+  } else if (val > threshold + margin) {
+    lcd.print("HIGH ");
+  } else {
+    lcd.print("OK   ");
+  }
+}
+
 void updateDisplay() {
   unsigned long now = millis();
 
   if (now - lastDisplaySwitch >= 10000) {
-    displayMode = !displayMode;
+    displayMode = (displayMode + 1) % 6;
     lcd.clear();
     lastDisplaySwitch = now;
   }
 
-  lcd.setCursor(0, 0);
-  lcd.print("Seegrid Aging Room");
-
-  extern float tA, tB, tC, tD, hA, hB, hC, hD;
   extern float tempThreshold;
+  extern float skitTempThreshold, skitHumidThreshold;
+  extern float camTempThreshold,  camHumidThreshold;
   extern bool blinkState;
 
-  if (displayMode == 0) {
-    lcd.setCursor(0, 1);
-    lcd.print("Temperature       ");
-    lcd.setCursor(0, 2);
-    lcd.print("A: ");
-    lcd.print(isnan(tA) ? (blinkState ? "ERR  " : "     ") : (abs(tA - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tA, 1) + " C");
-    lcd.setCursor(10, 2);
-    lcd.print("B: ");
-    lcd.print(isnan(tB) ? (blinkState ? "ERR  " : "     ") : (abs(tB - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tB, 1) + " C");
-    lcd.setCursor(0, 3);
-    lcd.print("C: ");
-    lcd.print(isnan(tC) ? (blinkState ? "ERR  " : "     ") : (abs(tC - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tC, 1) + " C");
-    lcd.setCursor(10, 3);
-    lcd.print("D: ");
-    lcd.print(isnan(tD) ? (blinkState ? "ERR  " : "     ") : (abs(tD - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tD, 1) + " C");
-  } else {
-    lcd.setCursor(0, 1);
-    lcd.print("Humidity          ");
-    lcd.setCursor(0, 2);
-    lcd.print("A: ");
-    lcd.print(isnan(hA) ? (blinkState ? "ERR  " : "     ") : String(hA, 1) + " %");
-    lcd.setCursor(10, 2);
-    lcd.print("B: ");
-    lcd.print(isnan(hB) ? (blinkState ? "ERR  " : "     ") : String(hB, 1) + " %");
-    lcd.setCursor(0, 3);
-    lcd.print("C: ");
-    lcd.print(isnan(hC) ? (blinkState ? "ERR  " : "     ") : String(hC, 1) + " %");
-    lcd.setCursor(10, 3);
-    lcd.print("D: ");
-    lcd.print(isnan(hD) ? (blinkState ? "ERR  " : "     ") : String(hD, 1) + " %");
+  switch (displayMode) {
+
+    // --------------------------------------------------------
+    case 0:  // Aging Room — Temperature
+      lcd.setCursor(0, 0);
+      lcd.print("Aging Room Temp     ");
+      lcd.setCursor(0, 1);
+      lcd.print("A:");
+      lcd.print(isnan(tA) ? (blinkState ? "ERR  " : "     ") :
+                (abs(tA - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
+                (String(tA, 1) + "C").c_str());
+      lcd.setCursor(10, 1);
+      lcd.print("B:");
+      lcd.print(isnan(tB) ? (blinkState ? "ERR  " : "     ") :
+                (abs(tB - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
+                (String(tB, 1) + "C").c_str());
+      lcd.setCursor(0, 2);
+      lcd.print("C:");
+      lcd.print(isnan(tC) ? (blinkState ? "ERR  " : "     ") :
+                (abs(tC - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
+                (String(tC, 1) + "C").c_str());
+      lcd.setCursor(10, 2);
+      lcd.print("D:");
+      lcd.print(isnan(tD) ? (blinkState ? "ERR  " : "     ") :
+                (abs(tD - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
+                (String(tD, 1) + "C").c_str());
+      lcd.setCursor(0, 3);
+      lcd.print("Thresh:");
+      lcd.print((int)tempThreshold);
+      lcd.print("C           ");
+      break;
+
+    // --------------------------------------------------------
+    case 1:  // Aging Room — Humidity
+      lcd.setCursor(0, 0);
+      lcd.print("Aging Room Humidity ");
+      lcd.setCursor(0, 1);
+      lcd.print("A:");
+      lcd.print(isnan(hA) ? (blinkState ? "ERR  " : "     ") : (String(hA, 1) + "%").c_str());
+      lcd.setCursor(10, 1);
+      lcd.print("B:");
+      lcd.print(isnan(hB) ? (blinkState ? "ERR  " : "     ") : (String(hB, 1) + "%").c_str());
+      lcd.setCursor(0, 2);
+      lcd.print("C:");
+      lcd.print(isnan(hC) ? (blinkState ? "ERR  " : "     ") : (String(hC, 1) + "%").c_str());
+      lcd.setCursor(10, 2);
+      lcd.print("D:");
+      lcd.print(isnan(hD) ? (blinkState ? "ERR  " : "     ") : (String(hD, 1) + "%").c_str());
+      lcd.setCursor(0, 3);
+      lcd.print("                    ");
+      break;
+
+    // --------------------------------------------------------
+    case 2:  // Skit Room — Temperature + Humidity
+      lcd.setCursor(0, 0);
+      lcd.print("Skit Room           ");
+      lcd.setCursor(0, 1);
+      lcd.print("Temp: ");
+      printSensorVal(tSkit, 6, 1, "C  ");
+      lcd.setCursor(0, 2);
+      lcd.print("Humid:");
+      printSensorVal(hSkit, 6, 2, "%  ");
+      lcd.setCursor(0, 3);
+      lcd.print("                    ");
+      break;
+
+    // --------------------------------------------------------
+    case 3:  // Skit Room — Threshold Status
+      lcd.setCursor(0, 0);
+      lcd.print("Skit Threshold      ");
+      lcd.setCursor(0, 1);
+      lcd.print("Temp  Thresh:");
+      lcd.print((int)skitTempThreshold);
+      lcd.print("C   ");
+      lcd.setCursor(0, 2);
+      lcd.print("Temp  Status:");
+      printThreshStatus(tSkit, skitTempThreshold, THRESHOLD_MARGIN, 13, 2);
+      lcd.setCursor(0, 3);
+      lcd.print("Humid Thresh:");
+      lcd.print((int)skitHumidThreshold);
+      lcd.print("%   ");
+      break;
+
+    // --------------------------------------------------------
+    case 4:  // Camera Room — Temperature + Humidity
+      lcd.setCursor(0, 0);
+      lcd.print("Camera Room         ");
+      lcd.setCursor(0, 1);
+      lcd.print("Temp: ");
+      printSensorVal(tCam, 6, 1, "C  ");
+      lcd.setCursor(0, 2);
+      lcd.print("Humid:");
+      printSensorVal(hCam, 6, 2, "%  ");
+      lcd.setCursor(0, 3);
+      lcd.print("                    ");
+      break;
+
+    // --------------------------------------------------------
+    case 5:  // Camera Room — Threshold Status
+      lcd.setCursor(0, 0);
+      lcd.print("Camera Threshold    ");
+      lcd.setCursor(0, 1);
+      lcd.print("Temp  Thresh:");
+      lcd.print((int)camTempThreshold);
+      lcd.print("C   ");
+      lcd.setCursor(0, 2);
+      lcd.print("Temp  Status:");
+      printThreshStatus(tCam, camTempThreshold, THRESHOLD_MARGIN, 13, 2);
+      lcd.setCursor(0, 3);
+      lcd.print("Humid Thresh:");
+      lcd.print((int)camHumidThreshold);
+      lcd.print("%   ");
+      break;
   }
 }
