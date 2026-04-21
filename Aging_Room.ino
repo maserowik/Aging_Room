@@ -64,7 +64,7 @@ void setup() {
 
   Udp.begin(UDP_LOCAL_PORT);
   requestNtpTime();
-  lastNtpCheck = millis();
+  lastNtpCheck = false;
 
   initSDCard();
   lastDisplaySwitch = millis();
@@ -106,12 +106,21 @@ void loop() {
   updateLEDs();
   updateDisplay();
   
-  // Muzzle the dog before checking NTP
-  if (millis() - lastNtpCheck >= NTP_INTERVAL) {
-    wdt_disable();       
-    requestNtpTime();    
-    wdt_enable(WDTO_8S); 
-    lastNtpCheck = millis();
+  // --- NTP SYNC AT NOON AND MIDNIGHT ---
+  // Syncs at 00:00 and 12:00 every calendar day regardless of boot time
+  if (currentEpoch > 1000000000UL) {
+    int y, mo, d, h, mi, s, wd;
+    epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
+    bool isNtpWindow = (h == 0 || h == 12) && (mi == 0);
+    if (isNtpWindow && !lastNtpCheck) {
+      wdt_disable();
+      requestNtpTime();
+      wdt_enable(WDTO_8S);
+      lastNtpCheck = true;  // Prevent re-triggering within this minute
+    }
+    if (!isNtpWindow) {
+      lastNtpCheck = false; // Reset when outside the sync window
+    }
   }
 
   // --- The Midnight Janitor (6-Month Cleanup) ---

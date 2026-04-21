@@ -41,7 +41,7 @@
 #define BLINK_INTERVAL_FAST   250
 #define SENSOR_READ_INTERVAL  2000
 #define CSV_WRITE_INTERVAL    300000
-#define NTP_INTERVAL          86400000
+// NTP syncs at 00:00 and 12:00 every calendar day — see Aging_Room.ino loop()
 
 // SD Card Configuration
 #define SD_CHIP_SELECT 4

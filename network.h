@@ -18,7 +18,7 @@ extern EthernetServer server;
 extern byte mac[6];
 extern byte packetBuffer[NTP_PACKET_SIZE];
 extern unsigned long currentEpoch;
-extern unsigned long lastNtpCheck;
+extern bool lastNtpCheck;
 extern unsigned long lastNtpEpoch;
 extern ConnectionTracker connectionTrackers[CONNECTION_TRACKING_SIZE];
 extern uint8_t globalConnectionCount;

@@ -7,7 +7,7 @@ EthernetUDP Udp;
 EthernetServer server(SERVER_PORT);
 byte packetBuffer[NTP_PACKET_SIZE];
 unsigned long currentEpoch = 0;
-unsigned long lastNtpCheck = 0;
+bool lastNtpCheck = false;
 unsigned long lastNtpEpoch = 0;
 ConnectionTracker connectionTrackers[CONNECTION_TRACKING_SIZE];
 uint8_t globalConnectionCount = 0;
