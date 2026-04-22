@@ -119,24 +119,16 @@ void updateDisplay() {
       lcd.print("Aging Room Temp     ");
       lcd.setCursor(0, 1);
       lcd.print("A:");
-      lcd.print(isnan(tA) ? (blinkState ? "ERR  " : "     ") :
-                (abs(tA - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
-                (String(tA, 1) + "C").c_str());
+      { char b[7]; if(isnan(tA)){lcd.print(blinkState?"ERR  ":"     ");} else if(abs(tA-tempThreshold)>THRESHOLD_MARGIN&&blinkState){lcd.print("     ");} else{dtostrf(tA,4,1,b);lcd.print(b);lcd.print("C");} }
       lcd.setCursor(10, 1);
       lcd.print("B:");
-      lcd.print(isnan(tB) ? (blinkState ? "ERR  " : "     ") :
-                (abs(tB - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
-                (String(tB, 1) + "C").c_str());
+      { char b[7]; if(isnan(tB)){lcd.print(blinkState?"ERR  ":"     ");} else if(abs(tB-tempThreshold)>THRESHOLD_MARGIN&&blinkState){lcd.print("     ");} else{dtostrf(tB,4,1,b);lcd.print(b);lcd.print("C");} }
       lcd.setCursor(0, 2);
       lcd.print("C:");
-      lcd.print(isnan(tC) ? (blinkState ? "ERR  " : "     ") :
-                (abs(tC - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
-                (String(tC, 1) + "C").c_str());
+      { char b[7]; if(isnan(tC)){lcd.print(blinkState?"ERR  ":"     ");} else if(abs(tC-tempThreshold)>THRESHOLD_MARGIN&&blinkState){lcd.print("     ");} else{dtostrf(tC,4,1,b);lcd.print(b);lcd.print("C");} }
       lcd.setCursor(10, 2);
       lcd.print("D:");
-      lcd.print(isnan(tD) ? (blinkState ? "ERR  " : "     ") :
-                (abs(tD - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " :
-                (String(tD, 1) + "C").c_str());
+      { char b[7]; if(isnan(tD)){lcd.print(blinkState?"ERR  ":"     ");} else if(abs(tD-tempThreshold)>THRESHOLD_MARGIN&&blinkState){lcd.print("     ");} else{dtostrf(tD,4,1,b);lcd.print(b);lcd.print("C");} }
       lcd.setCursor(0, 3);
       lcd.print("Thresh:");
       lcd.print((int)tempThreshold);
@@ -149,16 +141,16 @@ void updateDisplay() {
       lcd.print("Aging Room Humidity ");
       lcd.setCursor(0, 1);
       lcd.print("A:");
-      lcd.print(isnan(hA) ? (blinkState ? "ERR  " : "     ") : (String(hA, 1) + "%").c_str());
+      { char b[7]; if(isnan(hA)){lcd.print(blinkState?"ERR  ":"     ");} else{dtostrf(hA,4,1,b);lcd.print(b);lcd.print("%");} }
       lcd.setCursor(10, 1);
       lcd.print("B:");
-      lcd.print(isnan(hB) ? (blinkState ? "ERR  " : "     ") : (String(hB, 1) + "%").c_str());
+      { char b[7]; if(isnan(hB)){lcd.print(blinkState?"ERR  ":"     ");} else{dtostrf(hB,4,1,b);lcd.print(b);lcd.print("%");} }
       lcd.setCursor(0, 2);
       lcd.print("C:");
-      lcd.print(isnan(hC) ? (blinkState ? "ERR  " : "     ") : (String(hC, 1) + "%").c_str());
+      { char b[7]; if(isnan(hC)){lcd.print(blinkState?"ERR  ":"     ");} else{dtostrf(hC,4,1,b);lcd.print(b);lcd.print("%");} }
       lcd.setCursor(10, 2);
       lcd.print("D:");
-      lcd.print(isnan(hD) ? (blinkState ? "ERR  " : "     ") : (String(hD, 1) + "%").c_str());
+      { char b[7]; if(isnan(hD)){lcd.print(blinkState?"ERR  ":"     ");} else{dtostrf(hD,4,1,b);lcd.print(b);lcd.print("%");} }
       lcd.setCursor(0, 3);
       lcd.print("                    ");
       break;
@@ -182,16 +174,17 @@ void updateDisplay() {
       lcd.setCursor(0, 0);
       lcd.print("Skit Threshold      ");
       lcd.setCursor(0, 1);
-      lcd.print("Temp  Thresh:");
+      lcd.print("T:");
       lcd.print((int)skitTempThreshold);
-      lcd.print("C   ");
+      lcd.print("C St:");
+      printThreshStatus(tSkit, skitTempThreshold, THRESHOLD_MARGIN, 9, 1);
       lcd.setCursor(0, 2);
-      lcd.print("Temp  Status:");
-      printThreshStatus(tSkit, skitTempThreshold, THRESHOLD_MARGIN, 13, 2);
-      lcd.setCursor(0, 3);
-      lcd.print("Humid Thresh:");
+      lcd.print("H:");
       lcd.print((int)skitHumidThreshold);
-      lcd.print("%   ");
+      lcd.print("% St:");
+      printThreshStatus(hSkit, skitHumidThreshold, THRESHOLD_MARGIN, 9, 2);
+      lcd.setCursor(0, 3);
+      lcd.print("                    ");
       break;
 
     // --------------------------------------------------------
@@ -213,16 +206,17 @@ void updateDisplay() {
       lcd.setCursor(0, 0);
       lcd.print("Camera Threshold    ");
       lcd.setCursor(0, 1);
-      lcd.print("Temp  Thresh:");
+      lcd.print("T:");
       lcd.print((int)camTempThreshold);
-      lcd.print("C   ");
+      lcd.print("C St:");
+      printThreshStatus(tCam, camTempThreshold, THRESHOLD_MARGIN, 9, 1);
       lcd.setCursor(0, 2);
-      lcd.print("Temp  Status:");
-      printThreshStatus(tCam, camTempThreshold, THRESHOLD_MARGIN, 13, 2);
-      lcd.setCursor(0, 3);
-      lcd.print("Humid Thresh:");
+      lcd.print("H:");
       lcd.print((int)camHumidThreshold);
-      lcd.print("%   ");
+      lcd.print("% St:");
+      printThreshStatus(hCam, camHumidThreshold, THRESHOLD_MARGIN, 9, 2);
+      lcd.setCursor(0, 3);
+      lcd.print("                    ");
       break;
   }
 }

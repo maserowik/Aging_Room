@@ -56,54 +56,129 @@ void appendCsvData() {
   int year, month, day, hour, minute, second, weekday;
   epochToDateTime(currentEpoch, year, month, day, hour, minute, second, weekday);
 
-  char tFile[13]; snprintf(tFile, sizeof(tFile), "%02d%02d%02d_T.csv", year % 100, month + 1, day);
-  char hFile[13]; snprintf(hFile, sizeof(hFile), "%02d%02d%02d_H.csv", year % 100, month + 1, day);
-
-  ensureDailyHeader(tFile);
-  ensureDailyHeader(hFile);
-
-  // Build date/time strings directly — no String heap allocation
+  // Build shared date/time strings
   char dateStr[12]; snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d", year, month + 1, day);
   char timeStr[9];  snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", hour, minute, second);
+  char ymd[7];      snprintf(ymd, sizeof(ymd), "%02d%02d%02d", year % 100, month + 1, day);
+
+  // --- Aging Room ---
+  char tFile[13]; snprintf(tFile, sizeof(tFile), "%s_T.csv", ymd);
+  char hFile[13]; snprintf(hFile, sizeof(hFile), "%s_H.csv", ymd);
+  ensureDailyHeader(tFile);
+  ensureDailyHeader(hFile);
 
   extern float tA, tB, tC, tD, hA, hB, hC, hD;
 
   File tf = SD.open(tFile, FILE_WRITE);
   if (tf) {
+    char buf[8];
     tf.print(dateStr); tf.print(","); tf.print(timeStr); tf.print(",");
-    tf.print(isnan(tA) ? "ERR" : String(tA, 1) + " C"); tf.print(",");
-    tf.print(isnan(tB) ? "ERR" : String(tB, 1) + " C"); tf.print(",");
-    tf.print(isnan(tC) ? "ERR" : String(tC, 1) + " C"); tf.print(",");
-    tf.println(isnan(tD) ? "ERR" : String(tD, 1) + " C");
-    tf.close();
-    wdt_reset();
+    if (isnan(tA)) { tf.print("ERR"); } else { dtostrf(tA, 4, 1, buf); tf.print(buf); tf.print(" C"); } tf.print(",");
+    if (isnan(tB)) { tf.print("ERR"); } else { dtostrf(tB, 4, 1, buf); tf.print(buf); tf.print(" C"); } tf.print(",");
+    if (isnan(tC)) { tf.print("ERR"); } else { dtostrf(tC, 4, 1, buf); tf.print(buf); tf.print(" C"); } tf.print(",");
+    if (isnan(tD)) { tf.print("ERR"); } else { dtostrf(tD, 4, 1, buf); tf.print(buf); tf.print(" C"); } tf.println();
+    tf.close(); wdt_reset();
   }
 
   File hf = SD.open(hFile, FILE_WRITE);
   if (hf) {
+    char buf[8];
     hf.print(dateStr); hf.print(","); hf.print(timeStr); hf.print(",");
-    hf.print(isnan(hA) ? "ERR" : String(hA, 1) + " %"); hf.print(",");
-    hf.print(isnan(hB) ? "ERR" : String(hB, 1) + " %"); hf.print(",");
-    hf.print(isnan(hC) ? "ERR" : String(hC, 1) + " %"); hf.print(",");
-    hf.println(isnan(hD) ? "ERR" : String(hD, 1) + " %");
-    hf.close();
-    wdt_reset();
+    if (isnan(hA)) { hf.print("ERR"); } else { dtostrf(hA, 4, 1, buf); hf.print(buf); hf.print(" %"); } hf.print(",");
+    if (isnan(hB)) { hf.print("ERR"); } else { dtostrf(hB, 4, 1, buf); hf.print(buf); hf.print(" %"); } hf.print(",");
+    if (isnan(hC)) { hf.print("ERR"); } else { dtostrf(hC, 4, 1, buf); hf.print(buf); hf.print(" %"); } hf.print(",");
+    if (isnan(hD)) { hf.print("ERR"); } else { dtostrf(hD, 4, 1, buf); hf.print(buf); hf.print(" %"); } hf.println();
+    hf.close(); wdt_reset();
+  }
+
+  // --- Skit Room ---
+  extern float tSkit, hSkit;
+  char skTFile[16]; snprintf(skTFile, sizeof(skTFile), "%s_SK_T.csv", ymd);
+  char skHFile[16]; snprintf(skHFile, sizeof(skHFile), "%s_SK_H.csv", ymd);
+
+  if (!SD.exists(skTFile)) {
+    File f = SD.open(skTFile, FILE_WRITE);
+    if (f) { f.println("Date,Time,Skit"); f.close(); }
+  }
+  if (!SD.exists(skHFile)) {
+    File f = SD.open(skHFile, FILE_WRITE);
+    if (f) { f.println("Date,Time,Skit"); f.close(); }
+  }
+
+  File skT = SD.open(skTFile, FILE_WRITE);
+  if (skT) {
+    char buf[8];
+    skT.print(dateStr); skT.print(","); skT.print(timeStr); skT.print(",");
+    if (isnan(tSkit)) { skT.print("ERR"); } else { dtostrf(tSkit, 4, 1, buf); skT.print(buf); skT.print(" C"); }
+    skT.println(); skT.close(); wdt_reset();
+  }
+
+  File skH = SD.open(skHFile, FILE_WRITE);
+  if (skH) {
+    char buf[8];
+    skH.print(dateStr); skH.print(","); skH.print(timeStr); skH.print(",");
+    if (isnan(hSkit)) { skH.print("ERR"); } else { dtostrf(hSkit, 4, 1, buf); skH.print(buf); skH.print(" %"); }
+    skH.println(); skH.close(); wdt_reset();
+  }
+
+  // --- Camera Room ---
+  extern float tCam, hCam;
+  char caTFile[16]; snprintf(caTFile, sizeof(caTFile), "%s_CA_T.csv", ymd);
+  char caHFile[16]; snprintf(caHFile, sizeof(caHFile), "%s_CA_H.csv", ymd);
+
+  if (!SD.exists(caTFile)) {
+    File f = SD.open(caTFile, FILE_WRITE);
+    if (f) { f.println("Date,Time,Camera"); f.close(); }
+  }
+  if (!SD.exists(caHFile)) {
+    File f = SD.open(caHFile, FILE_WRITE);
+    if (f) { f.println("Date,Time,Camera"); f.close(); }
+  }
+
+  File caT = SD.open(caTFile, FILE_WRITE);
+  if (caT) {
+    char buf[8];
+    caT.print(dateStr); caT.print(","); caT.print(timeStr); caT.print(",");
+    if (isnan(tCam)) { caT.print("ERR"); } else { dtostrf(tCam, 4, 1, buf); caT.print(buf); caT.print(" C"); }
+    caT.println(); caT.close(); wdt_reset();
+  }
+
+  File caH = SD.open(caHFile, FILE_WRITE);
+  if (caH) {
+    char buf[8];
+    caH.print(dateStr); caH.print(","); caH.print(timeStr); caH.print(",");
+    if (isnan(hCam)) { caH.print("ERR"); } else { dtostrf(hCam, 4, 1, buf); caH.print(buf); caH.print(" %"); }
+    caH.println(); caH.close(); wdt_reset();
   }
 }
 
 void purgeOldLogs() {
   extern unsigned long currentEpoch;
-  if (currentEpoch < 1000000000UL) return; 
+  if (currentEpoch < 1000000000UL) return;
 
-  unsigned long purgeEpoch = currentEpoch - (180UL * 86400UL); 
+  unsigned long purgeEpoch = currentEpoch - (180UL * 86400UL);
   int y, mo, d, h, mi, s, wd;
   epochToDateTime(purgeEpoch, y, mo, d, h, mi, s, wd);
-  
-  char tFile[13]; snprintf(tFile, sizeof(tFile), "%02d%02d%02d_T.csv", y % 100, mo + 1, d);
-  char hFile[13]; snprintf(hFile, sizeof(hFile), "%02d%02d%02d_H.csv", y % 100, mo + 1, d);
-  
+
+  char ymd[7]; snprintf(ymd, sizeof(ymd), "%02d%02d%02d", y % 100, mo + 1, d);
+
+  // Aging Room
+  char tFile[13]; snprintf(tFile, sizeof(tFile), "%s_T.csv", ymd);
+  char hFile[13]; snprintf(hFile, sizeof(hFile), "%s_H.csv", ymd);
   if (SD.exists(tFile)) SD.remove(tFile);
   if (SD.exists(hFile)) SD.remove(hFile);
+
+  // Skit Room
+  char skT[16]; snprintf(skT, sizeof(skT), "%s_SK_T.csv", ymd);
+  char skH[16]; snprintf(skH, sizeof(skH), "%s_SK_H.csv", ymd);
+  if (SD.exists(skT)) SD.remove(skT);
+  if (SD.exists(skH)) SD.remove(skH);
+
+  // Camera Room
+  char caT[16]; snprintf(caT, sizeof(caT), "%s_CA_T.csv", ymd);
+  char caH[16]; snprintf(caH, sizeof(caH), "%s_CA_H.csv", ymd);
+  if (SD.exists(caT)) SD.remove(caT);
+  if (SD.exists(caH)) SD.remove(caH);
 }
 
 void serveFile(EthernetClient &client, const char *filename, const char *contentType) {
@@ -112,35 +187,50 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
     return;
   }
 
-  if (strcmp(filename, "temp.csv") == 0 || strcmp(filename, "humid.csv") == 0) {
-    bool isTemp = (strcmp(filename, "temp.csv") == 0);
+  if (strcmp(filename, "temp.csv") == 0 || strcmp(filename, "humid.csv") == 0 ||
+      strcmp(filename, "SK_T.csv") == 0 || strcmp(filename, "SK_H.csv") == 0 ||
+      strcmp(filename, "CA_T.csv") == 0 || strcmp(filename, "CA_H.csv") == 0) {
+
+    // Determine file prefix and type
+    bool isTemp  = (strcmp(filename, "temp.csv") == 0 || strcmp(filename, "SK_T.csv") == 0 || strcmp(filename, "CA_T.csv") == 0);
+    bool isAging = (strcmp(filename, "temp.csv") == 0 || strcmp(filename, "humid.csv") == 0);
+    bool isSkit  = (strcmp(filename, "SK_T.csv") == 0 || strcmp(filename, "SK_H.csv") == 0);
+    // Camera is the remaining case
 
     client.println("HTTP/1.1 200 OK");
     client.print("Content-Type: "); client.println(contentType);
     client.print("Content-Disposition: inline; filename=\""); client.print(filename); client.println("\"");
     client.println("Connection: close\n");
-    client.println("Date,Time,Sensor A,Sensor B,Sensor C,Sensor D");
+
+    // Print appropriate header row
+    if (isAging) client.println("Date,Time,Sensor A,Sensor B,Sensor C,Sensor D");
+    else if (isSkit) client.println("Date,Time,Skit");
+    else client.println("Date,Time,Camera");
 
     extern unsigned long currentEpoch;
     for (int i = 6; i >= 0; i--) {
       unsigned long targetEpoch = currentEpoch - (i * 86400UL);
       int y, mo, d, h, mi, s, wd;
       epochToDateTime(targetEpoch, y, mo, d, h, mi, s, wd);
+      char ymd[7]; snprintf(ymd, sizeof(ymd), "%02d%02d%02d", y % 100, mo + 1, d);
 
-      char fn[13];
-      if (isTemp) snprintf(fn, sizeof(fn), "%02d%02d%02d_T.csv", y % 100, mo + 1, d);
-      else        snprintf(fn, sizeof(fn), "%02d%02d%02d_H.csv", y % 100, mo + 1, d);
+      char fn[16];
+      if      (isAging && isTemp)  snprintf(fn, sizeof(fn), "%s_T.csv",    ymd);
+      else if (isAging && !isTemp) snprintf(fn, sizeof(fn), "%s_H.csv",    ymd);
+      else if (isSkit  && isTemp)  snprintf(fn, sizeof(fn), "%s_SK_T.csv", ymd);
+      else if (isSkit  && !isTemp) snprintf(fn, sizeof(fn), "%s_SK_H.csv", ymd);
+      else if (isTemp)             snprintf(fn, sizeof(fn), "%s_CA_T.csv", ymd);
+      else                         snprintf(fn, sizeof(fn), "%s_CA_H.csv", ymd);
 
       if (SD.exists(fn)) {
         File f = SD.open(fn, FILE_READ);
         if (f) {
-          while(f.available()) { wdt_reset(); if (f.read() == '\n') break; } 
-          
-          byte buf[128]; 
-          while(f.available()) { 
+          while(f.available()) { wdt_reset(); if (f.read() == '\n') break; }
+          byte buf[128];
+          while(f.available()) {
             int n = f.read(buf, sizeof(buf));
             client.write(buf, n);
-            wdt_reset(); 
+            wdt_reset();
           }
           f.close();
         }

@@ -36,7 +36,7 @@ bool isLeapYear(int year);
 void epochToDateTime(unsigned long epoch, int &year, int &month, int &day, int &hour, int &minute, int &second, int &weekday);
 int nthWeekdayOfMonth(int year, int month, int targetWeekday, int n);
 bool isDST(int year, int month, int day, int hour);
-String getDateString();
-String getTimeString();
+void getDateString(char* buf, size_t bufLen);
+void getTimeString(char* buf, size_t bufLen);
 
 #endif // NETWORK_H
