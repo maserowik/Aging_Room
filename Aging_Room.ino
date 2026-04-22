@@ -130,7 +130,9 @@ void loop() {
     epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
     
     if (h == 0 && mi == 0 && d != lastPurgeDay) {
+      wdt_disable();
       purgeOldLogs();
+      wdt_disable();
       lastPurgeDay = d; 
     }
   }
