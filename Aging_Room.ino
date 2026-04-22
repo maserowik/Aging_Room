@@ -131,7 +131,9 @@ void loop() {
     epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
     
     if (h == 0 && mi == 0 && d != lastPurgeDay) {
+      wdt_disable();
       purgeOldLogs();
+      wdt_enable(WDTO_8S);
       lastPurgeDay = d; 
     }
   }
@@ -293,7 +295,7 @@ void loop() {
           }
           else if (strncmp(httpRequest, "GET /skit/temp.csv",  18) == 0) serveFile(client, "SK_T.csv",  "text/csv");
           else if (strncmp(httpRequest, "GET /skit/humid.csv", 19) == 0) serveFile(client, "SK_H.csv",  "text/csv");
-          else if (strncmp(httpRequest, "GET /skit ",           9) == 0) serveSkitPage(client);
+          else if (strncmp(httpRequest, "GET /skit ",          10) == 0) serveSkitPage(client);
 
           // --- Camera Room endpoints ---
           else if (strncmp(httpRequest, "GET /camera/status",         18) == 0) serveCameraStatus(client);
@@ -312,7 +314,7 @@ void loop() {
           }
           else if (strncmp(httpRequest, "GET /camera/temp.csv",  20) == 0) serveFile(client, "CA_T.csv",  "text/csv");
           else if (strncmp(httpRequest, "GET /camera/humid.csv", 21) == 0) serveFile(client, "CA_H.csv",  "text/csv");
-          else if (strncmp(httpRequest, "GET /camera ",          11) == 0) serveCameraPage(client);
+          else if (strncmp(httpRequest, "GET /camera ",         12) == 0) serveCameraPage(client);
 
           else if (strncmp(httpRequest, "GET / ", 6) == 0) serveRootPage(client);
           else {
