@@ -8,6 +8,31 @@ LiquidCrystal_I2C lcd(0x27, 20, 4);
 int displayMode = 0;
 unsigned long lastDisplaySwitch = 0;
 
+static void printTempReading(float value, float threshold, bool blink) {
+  if (isnan(value)) {
+    lcd.print(blink ? "ERR  " : "     ");
+    return;
+  }
+
+  if (abs(value - threshold) > THRESHOLD_MARGIN && blink) {
+    lcd.print("     ");
+    return;
+  }
+
+  lcd.print(value, 1);
+  lcd.print(" C");
+}
+
+static void printHumidityReading(float value, bool blink) {
+  if (isnan(value)) {
+    lcd.print(blink ? "ERR  " : "     ");
+    return;
+  }
+
+  lcd.print(value, 1);
+  lcd.print(" %");
+}
+
 void initDisplay() {
   lcd.init();
   lcd.backlight();
@@ -83,30 +108,30 @@ void updateDisplay() {
     lcd.print("Temperature       ");
     lcd.setCursor(0, 2);
     lcd.print("A: ");
-    lcd.print(isnan(tA) ? (blinkState ? "ERR  " : "     ") : (abs(tA - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tA, 1) + " C");
+    printTempReading(tA, tempThreshold, blinkState);
     lcd.setCursor(10, 2);
     lcd.print("B: ");
-    lcd.print(isnan(tB) ? (blinkState ? "ERR  " : "     ") : (abs(tB - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tB, 1) + " C");
+    printTempReading(tB, tempThreshold, blinkState);
     lcd.setCursor(0, 3);
     lcd.print("C: ");
-    lcd.print(isnan(tC) ? (blinkState ? "ERR  " : "     ") : (abs(tC - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tC, 1) + " C");
+    printTempReading(tC, tempThreshold, blinkState);
     lcd.setCursor(10, 3);
     lcd.print("D: ");
-    lcd.print(isnan(tD) ? (blinkState ? "ERR  " : "     ") : (abs(tD - tempThreshold) > THRESHOLD_MARGIN && blinkState) ? "     " : String(tD, 1) + " C");
+    printTempReading(tD, tempThreshold, blinkState);
   } else {
     lcd.setCursor(0, 1);
     lcd.print("Humidity          ");
     lcd.setCursor(0, 2);
     lcd.print("A: ");
-    lcd.print(isnan(hA) ? (blinkState ? "ERR  " : "     ") : String(hA, 1) + " %");
+    printHumidityReading(hA, blinkState);
     lcd.setCursor(10, 2);
     lcd.print("B: ");
-    lcd.print(isnan(hB) ? (blinkState ? "ERR  " : "     ") : String(hB, 1) + " %");
+    printHumidityReading(hB, blinkState);
     lcd.setCursor(0, 3);
     lcd.print("C: ");
-    lcd.print(isnan(hC) ? (blinkState ? "ERR  " : "     ") : String(hC, 1) + " %");
+    printHumidityReading(hC, blinkState);
     lcd.setCursor(10, 3);
     lcd.print("D: ");
-    lcd.print(isnan(hD) ? (blinkState ? "ERR  " : "     ") : String(hD, 1) + " %");
+    printHumidityReading(hD, blinkState);
   }
 }

@@ -44,18 +44,20 @@ void setup() {
   lcd.print("DNS Name:");
 
   const char* hostname = "agingroom00.mach.hq.seegrid.lan";
-  String scrollText = String(hostname) + "    ";
-  int scrollLen = scrollText.length();
+  char scrollText[48];
+  snprintf(scrollText, sizeof(scrollText), "%s    ", hostname);
+  int scrollLen = strlen(scrollText);
   unsigned long scrollStart = millis();
   int scrollPos = 0;
   
   while (millis() - scrollStart < 10000) {
     lcd.setCursor(0, 3);
-    String display = "";
+    char displayLine[21];
     for (int i = 0; i < 20; i++) {
-      display += scrollText[(scrollPos + i) % scrollLen];
+      displayLine[i] = scrollText[(scrollPos + i) % scrollLen];
     }
-    lcd.print(display);
+    displayLine[20] = '\0';
+    lcd.print(displayLine);
     delay(300); 
     scrollPos = (scrollPos + 1) % scrollLen;
   }

@@ -71,10 +71,10 @@ void appendCsvData() {
   File tf = SD.open(tFile, FILE_WRITE);
   if (tf) {
     tf.print(dateStr); tf.print(","); tf.print(timeStr); tf.print(",");
-    tf.print(isnan(tA) ? "ERR" : String(tA, 1) + " C"); tf.print(",");
-    tf.print(isnan(tB) ? "ERR" : String(tB, 1) + " C"); tf.print(",");
-    tf.print(isnan(tC) ? "ERR" : String(tC, 1) + " C"); tf.print(",");
-    tf.println(isnan(tD) ? "ERR" : String(tD, 1) + " C");
+    if (isnan(tA)) tf.print("ERR"); else { tf.print(tA, 1); tf.print(" C"); } tf.print(",");
+    if (isnan(tB)) tf.print("ERR"); else { tf.print(tB, 1); tf.print(" C"); } tf.print(",");
+    if (isnan(tC)) tf.print("ERR"); else { tf.print(tC, 1); tf.print(" C"); } tf.print(",");
+    if (isnan(tD)) tf.println("ERR"); else { tf.print(tD, 1); tf.println(" C"); }
     tf.close();
     wdt_reset();
   }
@@ -82,10 +82,10 @@ void appendCsvData() {
   File hf = SD.open(hFile, FILE_WRITE);
   if (hf) {
     hf.print(dateStr); hf.print(","); hf.print(timeStr); hf.print(",");
-    hf.print(isnan(hA) ? "ERR" : String(hA, 1) + " %"); hf.print(",");
-    hf.print(isnan(hB) ? "ERR" : String(hB, 1) + " %"); hf.print(",");
-    hf.print(isnan(hC) ? "ERR" : String(hC, 1) + " %"); hf.print(",");
-    hf.println(isnan(hD) ? "ERR" : String(hD, 1) + " %");
+    if (isnan(hA)) hf.print("ERR"); else { hf.print(hA, 1); hf.print(" %"); } hf.print(",");
+    if (isnan(hB)) hf.print("ERR"); else { hf.print(hB, 1); hf.print(" %"); } hf.print(",");
+    if (isnan(hC)) hf.print("ERR"); else { hf.print(hC, 1); hf.print(" %"); } hf.print(",");
+    if (isnan(hD)) hf.println("ERR"); else { hf.print(hD, 1); hf.println(" %"); }
     hf.close();
     wdt_reset();
   }
