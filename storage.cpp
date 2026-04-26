@@ -93,17 +93,16 @@ void appendCsvData() {
 
   // --- Skit Room ---
   extern float tSkit, hSkit;
-  char skTFile[16]; snprintf(skTFile, sizeof(skTFile), "%s_SK_T.csv", ymd);
-  char skHFile[16]; snprintf(skHFile, sizeof(skHFile), "%s_SK_H.csv", ymd);
+  Serial.print(F("CSV write tSkit=")); Serial.println(tSkit);
+  char skTFile[13]; snprintf(skTFile, sizeof(skTFile), "%sST.csv", ymd);
+  char skHFile[13]; snprintf(skHFile, sizeof(skHFile), "%sSH.csv", ymd);
+  Serial.print(F("SK file: ")); Serial.println(skTFile);
 
   if (!SD.exists(skTFile)) {
     File f = SD.open(skTFile, FILE_WRITE);
-    if (f) { f.println("Date,Time,Skit"); f.close(); }
-  }
-  if (!SD.exists(skHFile)) {
-    File f = SD.open(skHFile, FILE_WRITE);
-    if (f) { f.println("Date,Time,Skit"); f.close(); }
-  }
+    if (f) { f.println("Date,Time,Skit"); f.close(); Serial.println(F("SK header written")); }
+    else { Serial.println(F("SK header FAILED")); }
+  } else { Serial.println(F("SK file exists")); }
 
   File skT = SD.open(skTFile, FILE_WRITE);
   if (skT) {
@@ -111,7 +110,8 @@ void appendCsvData() {
     skT.print(dateStr); skT.print(","); skT.print(timeStr); skT.print(",");
     if (isnan(tSkit)) { skT.print("ERR"); } else { dtostrf(tSkit, 4, 1, buf); skT.print(buf); skT.print(" C"); }
     skT.println(); skT.close(); wdt_reset();
-  }
+    Serial.println(F("SK data written"));
+  } else { Serial.println(F("SK data open FAILED")); }
 
   File skH = SD.open(skHFile, FILE_WRITE);
   if (skH) {
@@ -123,8 +123,8 @@ void appendCsvData() {
 
   // --- Camera Room ---
   extern float tCam, hCam;
-  char caTFile[16]; snprintf(caTFile, sizeof(caTFile), "%s_CA_T.csv", ymd);
-  char caHFile[16]; snprintf(caHFile, sizeof(caHFile), "%s_CA_H.csv", ymd);
+  char caTFile[13]; snprintf(caTFile, sizeof(caTFile), "%sCT.csv", ymd);
+  char caHFile[13]; snprintf(caHFile, sizeof(caHFile), "%sCH.csv", ymd);
 
   if (!SD.exists(caTFile)) {
     File f = SD.open(caTFile, FILE_WRITE);
@@ -169,14 +169,14 @@ void purgeOldLogs() {
   if (SD.exists(hFile)) SD.remove(hFile);
 
   // Skit Room
-  char skT[16]; snprintf(skT, sizeof(skT), "%s_SK_T.csv", ymd);
-  char skH[16]; snprintf(skH, sizeof(skH), "%s_SK_H.csv", ymd);
+  char skT[13]; snprintf(skT, sizeof(skT), "%sST.csv", ymd);
+  char skH[13]; snprintf(skH, sizeof(skH), "%sSH.csv", ymd);
   if (SD.exists(skT)) SD.remove(skT);
   if (SD.exists(skH)) SD.remove(skH);
 
   // Camera Room
-  char caT[16]; snprintf(caT, sizeof(caT), "%s_CA_T.csv", ymd);
-  char caH[16]; snprintf(caH, sizeof(caH), "%s_CA_H.csv", ymd);
+  char caT[13]; snprintf(caT, sizeof(caT), "%sCT.csv", ymd);
+  char caH[13]; snprintf(caH, sizeof(caH), "%sCH.csv", ymd);
   if (SD.exists(caT)) SD.remove(caT);
   if (SD.exists(caH)) SD.remove(caH);
 }
@@ -214,13 +214,13 @@ void serveFile(EthernetClient &client, const char *filename, const char *content
       epochToDateTime(targetEpoch, y, mo, d, h, mi, s, wd);
       char ymd[7]; snprintf(ymd, sizeof(ymd), "%02d%02d%02d", y % 100, mo + 1, d);
 
-      char fn[16];
-      if      (isAging && isTemp)  snprintf(fn, sizeof(fn), "%s_T.csv",    ymd);
-      else if (isAging && !isTemp) snprintf(fn, sizeof(fn), "%s_H.csv",    ymd);
-      else if (isSkit  && isTemp)  snprintf(fn, sizeof(fn), "%s_SK_T.csv", ymd);
-      else if (isSkit  && !isTemp) snprintf(fn, sizeof(fn), "%s_SK_H.csv", ymd);
-      else if (isTemp)             snprintf(fn, sizeof(fn), "%s_CA_T.csv", ymd);
-      else                         snprintf(fn, sizeof(fn), "%s_CA_H.csv", ymd);
+      char fn[13];
+      if      (isAging && isTemp)  snprintf(fn, sizeof(fn), "%s_T.csv", ymd);
+      else if (isAging && !isTemp) snprintf(fn, sizeof(fn), "%s_H.csv", ymd);
+      else if (isSkit  && isTemp)  snprintf(fn, sizeof(fn), "%sST.csv", ymd);
+      else if (isSkit  && !isTemp) snprintf(fn, sizeof(fn), "%sSH.csv", ymd);
+      else if (isTemp)             snprintf(fn, sizeof(fn), "%sCT.csv", ymd);
+      else                         snprintf(fn, sizeof(fn), "%sCH.csv", ymd);
 
       if (SD.exists(fn)) {
         File f = SD.open(fn, FILE_READ);
@@ -868,20 +868,48 @@ void serveCameraSysInfo(EthernetClient &client) {
   client.println();
 }
 
+
 // ============================================================
-// SKIT ROOM — Dashboard page
+// ROOM PAGE — Consolidated dashboard for Skit and Camera rooms
+// roomName    : "Skit Room" or "Camera Room"
+// urlBase     : "/skit" or "/camera"
+// filePrefix  : "SK" or "CA"
+// tempColor   : chart line color for temperature dataset
+// humidColor  : chart line color for humidity dataset
+// dlPrefix    : "Skit" or "Camera" (download filename prefix)
+// tThresh     : current temp threshold value
+// hThresh     : current humid threshold value
+// activeNav   : which nav button is active ("skit" or "camera")
 // ============================================================
-void serveSkitPage(EthernetClient &client) {
+static void serveRoomPage(EthernetClient &client,
+                          const char* roomName,
+                          const char* urlBase,
+                          const char* filePrefix,
+                          const char* tempColor,
+                          const char* humidColor,
+                          const char* dlPrefix,
+                          float tThresh,
+                          float hThresh,
+                          const char* activeNav) {
   extern unsigned long currentEpoch;
-  extern float skitTempThreshold, skitHumidThreshold;
   int _y, _mo, _d, _h, _mi, _s, _wd;
   epochToDateTime(currentEpoch, _y, _mo, _d, _h, _mi, _s, _wd);
   char lastUpdate[20];
   snprintf(lastUpdate, sizeof(lastUpdate), "%04d-%02d-%02d %02d:%02d:%02d", _y, _mo+1, _d, _h, _mi, _s);
 
+  // Build room-specific URL strings once
+  char statusUrl[24], sysinfoUrl[26], threshTUrl[32], threshHUrl[34];
+  char tempCsvUrl[24], humidCsvUrl[26];
+  snprintf(statusUrl,   sizeof(statusUrl),   "%s/status",         urlBase);
+  snprintf(sysinfoUrl,  sizeof(sysinfoUrl),  "%s/sysinfo",        urlBase);
+  snprintf(threshTUrl,  sizeof(threshTUrl),  "%s/threshold/temp", urlBase);
+  snprintf(threshHUrl,  sizeof(threshHUrl),  "%s/threshold/humid",urlBase);
+  snprintf(tempCsvUrl,  sizeof(tempCsvUrl),  "%s/temp.csv",       urlBase);
+  snprintf(humidCsvUrl, sizeof(humidCsvUrl), "%s/humid.csv",      urlBase);
+
   client.println(F("HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: close\n"));
   client.println(F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"));
-  client.println(F("<title>Skit Room</title>"));
+  client.print(F("<title>")); client.print(roomName); client.println(F("</title>"));
   client.println(F("<style>"));
   client.println(F("body{font-family:sans-serif;background:#f4f4f4;padding:12px 16px;box-sizing:border-box;margin:0;}"));
   client.println(F(".tab{display:inline-block;padding:10px 20px;margin:5px;background:#ccc;cursor:pointer;border-radius:4px;}"));
@@ -893,7 +921,7 @@ void serveSkitPage(EthernetClient &client) {
   client.println(F("#statusBar{display:flex;gap:20px;align-items:center;padding:12px 16px;margin-bottom:12px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:15px;flex-wrap:wrap;}"));
   client.println(F(".nav-bar{display:flex;gap:10px;margin-bottom:16px;}"));
   client.println(F(".nav-btn{padding:8px 16px;background:#2980b9;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;}"));
-  client.println(F(".nav-btn.active{background:#1a5276;}"));
+  client.println(F(".nav-btn.active-room{background:#1a5276;}"));
   client.println(F(".thresh-panel{background:#fff;border-radius:6px;border:1px solid #ddd;padding:12px 16px;margin-top:16px;font-size:14px;}"));
   client.println(F("</style>"));
   client.println(F("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"));
@@ -904,26 +932,28 @@ void serveSkitPage(EthernetClient &client) {
 
   wdt_reset();
 
-  // Navigation bar
+  // Navigation bar — highlight active room
   client.println(F("<div class='nav-bar'>"));
   client.println(F("<a class='nav-btn' href='/'>Aging Room</a>"));
-  client.println(F("<a class='nav-btn active' href='/skit'>Skit Room</a>"));
-  client.println(F("<a class='nav-btn' href='/camera'>Camera Room</a>"));
+  client.print(F("<a class='nav-btn"));
+  if (strcmp(activeNav, "skit") == 0) client.print(F(" active-room"));
+  client.println(F("' href='/skit'>Skit Room</a>"));
+  client.print(F("<a class='nav-btn"));
+  if (strcmp(activeNav, "camera") == 0) client.print(F(" active-room"));
+  client.println(F("' href='/camera'>Camera Room</a>"));
   client.println(F("</div>"));
 
-  client.println(F("<h2>Skit Room</h2>"));
+  client.print(F("<h2>")); client.print(roomName); client.println(F("</h2>"));
   client.println(F("<div style='margin-bottom:20px;font-size:14px;color:#555;'>"));
   client.print(F("Last update: <strong id='lastUpdate' style='color:#000;'>"));
   client.print(lastUpdate);
   client.println(F("</strong></div>"));
 
-  // Status bar
   client.println(F("<div id='statusBar'><strong>Sensor:</strong>"));
   client.println(F("<span id='statusTemp'>Temp: --</span>"));
   client.println(F("<span id='statusHumid'>Humid: --</span>"));
   client.println(F("</div>"));
 
-  // Tabs
   client.println(F("<div>"));
   client.println(F("<div class='tab active' onclick=\"showTab('temp',event)\">Temperature</div>"));
   client.println(F("<div class='tab' onclick=\"showTab('humid',event)\">Humidity</div>"));
@@ -934,13 +964,15 @@ void serveSkitPage(EthernetClient &client) {
 
   client.println(F("<div id='temp' class='tab-content active'>"));
   client.println(F("<label>Range: <select id='tempRange'><option value='1' selected>1</option><option value='3'>3</option><option value='5'>5</option><option value='7'>7</option></select> days</label>"));
-  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
+  client.println(F("<button onclick='if(tempChart){const l=document.createElement(\"a\");l.download=\"temp_chart.png\";l.href=tempChart.toBase64Image();l.click();}'>Export PNG</button>"));
+  client.println(F("<button onclick='if(typeof updateCharts===\"function\")updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(tempChart&&tempChart.resetZoom)tempChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='tempChart'></canvas></div></div>"));
 
   client.println(F("<div id='humid' class='tab-content'>"));
   client.println(F("<label>Range: <select id='humidRange'><option value='1' selected>1</option><option value='3'>3</option><option value='5'>5</option><option value='7'>7</option></select> days</label>"));
-  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
+  client.println(F("<button onclick='if(humidChart){const l=document.createElement(\"a\");l.download=\"humid_chart.png\";l.href=humidChart.toBase64Image();l.click();}'>Export PNG</button>"));
+  client.println(F("<button onclick='if(typeof updateCharts===\"function\")updateCharts()'>Update Now</button>"));
   client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
   client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='humidChart'></canvas></div></div>"));
 
@@ -956,7 +988,6 @@ void serveSkitPage(EthernetClient &client) {
 
   wdt_reset();
 
-  // System Status panel
   client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
   client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;'>System Status</div>"));
   client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;'>"));
@@ -965,7 +996,6 @@ void serveSkitPage(EthernetClient &client) {
   client.println(F("<span id='sysReceive'>&#128225; Last Receive: --</span> <span id='sysNtp'>&#128336; NTP Sync: --</span>"));
   client.println(F("</div></div>"));
 
-  // Threshold adjustment panel
   client.println(F("<div class='thresh-panel'>"));
   client.println(F("<div style='font-weight:bold;margin-bottom:10px;font-size:15px;'>Threshold Adjustment</div>"));
   client.println(F("<div style='display:flex;gap:30px;flex-wrap:wrap;'>"));
@@ -981,76 +1011,86 @@ void serveSkitPage(EthernetClient &client) {
 
   wdt_reset();
 
+  // JavaScript — inject room-specific values as JS variables, rest is generic
   client.println(F("<script>"));
   client.println(F("let tempChart, humidChart;"));
-  client.print(F("let tempThresh = ")); client.print(skitTempThreshold, 1); client.println(F(";"));
-  client.print(F("let humidThresh = ")); client.print(skitHumidThreshold, 1); client.println(F(";"));
-  client.println(F("const margin = 5.0;"));
-  client.println(F("let isOffline = false; let failedPings = 0;"));
+  client.print(F("let tempThresh=")); client.print(tThresh, 1); client.println(F(";"));
+  client.print(F("let humidThresh=")); client.print(hThresh, 1); client.println(F(";"));
+  client.println(F("const margin=5.0;"));
+  client.print(F("const STATUS_URL='")); client.print(statusUrl); client.println(F("';"));
+  client.print(F("const SYSINFO_URL='")); client.print(sysinfoUrl); client.println(F("';"));
+  client.print(F("const THRESH_T_URL='")); client.print(threshTUrl); client.println(F("';"));
+  client.print(F("const THRESH_H_URL='")); client.print(threshHUrl); client.println(F("';"));
+  client.print(F("const TEMP_CSV_URL='")); client.print(tempCsvUrl); client.println(F("';"));
+  client.print(F("const HUMID_CSV_URL='")); client.print(humidCsvUrl); client.println(F("';"));
+  client.print(F("const TEMP_COLOR='")); client.print(tempColor); client.println(F("';"));
+  client.print(F("const HUMID_COLOR='")); client.print(humidColor); client.println(F("';"));
+  client.print(F("const FILE_PREFIX='")); client.print(filePrefix); client.println(F("';"));
+  client.print(F("const DL_PREFIX='")); client.print(dlPrefix); client.println(F("';"));
+  client.print(F("const ROOM_NAME='")); client.print(roomName); client.println(F("';"));
+  client.println(F("let isOffline=false; let failedPings=0;"));
 
-  client.println(F("const warnBanner = document.createElement('div');"));
-  client.println(F("warnBanner.style.cssText = 'display:none;background:#f1c40f;color:#856404;padding:15px;text-align:center;font-weight:bold;font-size:16px;position:fixed;top:0;left:0;width:100%;z-index:9999;';"));
-  client.println(F("warnBanner.innerHTML = '&#9888;&#65039; SYSTEM OFFLINE: Connection lost. Auto-reconnecting...';"));
+  client.println(F("const warnBanner=document.createElement('div');"));
+  client.println(F("warnBanner.style.cssText='display:none;background:#f1c40f;color:#856404;padding:15px;text-align:center;font-weight:bold;font-size:16px;position:fixed;top:0;left:0;width:100%;z-index:9999;';"));
+  client.println(F("warnBanner.innerHTML='&#9888;&#65039; SYSTEM OFFLINE: Connection lost. Auto-reconnecting...';"));
   client.println(F("document.body.prepend(warnBanner);"));
 
   client.println(F("function handleDisconnect(){failedPings++;if(failedPings>=3){if(isOffline)return;isOffline=true;warnBanner.style.display='block';setTimeout(checkReconnect,4000);}}"));
-  client.println(F("async function checkReconnect(){try{let r=await fetch('/skit/status?t='+Date.now());if(r.ok||r.status===401){isOffline=false;failedPings=0;warnBanner.style.display='none';pollStatus();pollSysInfo();}else setTimeout(checkReconnect,4000);}catch(e){setTimeout(checkReconnect,4000);}}"));
+  client.println(F("async function checkReconnect(){try{let r=await fetch(STATUS_URL+'?t='+Date.now());if(r.ok||r.status===401){isOffline=false;failedPings=0;warnBanner.style.display='none';pollStatus();pollSysInfo();}else setTimeout(checkReconnect,4000);}catch(e){setTimeout(checkReconnect,4000);}}"));
   client.println(F("async function safeFetch(url){if(isOffline&&!url.includes('/status'))return null;try{let r=await fetch(url);if(!r.ok&&r.status!==404&&r.status!==401)throw new Error('Bad');failedPings=0;return r;}catch(e){handleDisconnect();return null;}}"));
-
   client.println(F("function showTab(id,evt){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));document.getElementById(id).classList.add('active');evt.target.classList.add('active');}"));
 
   wdt_reset();
 
-  client.println(F("async function pollStatus(){if(isOffline)return;try{let r=await safeFetch('/skit/status?t='+Date.now());if(!r)return;let txt=await r.text();"));
+  client.println(F("async function pollStatus(){if(isOffline)return;try{let r=await safeFetch(STATUS_URL+'?t='+Date.now());if(!r)return;let txt=await r.text();"));
   client.println(F("  let parts=txt.trim().split(',');"));
   client.println(F("  parts.forEach(p=>{let ci=p.indexOf(':');if(ci===-1)return;let key=p.substring(0,ci),val=p.substring(ci+1).split('|');"));
   client.println(F("    if(key==='TEMP'){let v=parseFloat(val[0]),st=val[1];let tEl=document.getElementById('statusTemp');"));
-  client.println(F("      if(st==='ERR'){tEl.innerHTML='<b>Temp: ERR</b>';}else{let f=(v*9/5+32).toFixed(1);let col=st==='OK'?'#27ae60':'#e74c3c';tEl.innerHTML='Temp: <b style=\"color:'+col+'\">'+v.toFixed(1)+'°C ('+f+'°F) '+st+'</b>';}}" ));
+  client.println(F("      if(st==='ERR'){tEl.innerHTML='<b>Temp: ERR</b>';}else{let f=(v*9/5+32).toFixed(1);let col=st==='OK'?'#27ae60':'#e74c3c';tEl.innerHTML='Temp: <b style=\"color:'+col+'\">'+v.toFixed(1)+'°C ('+f+'°F) '+st+'</b>';}}"));
   client.println(F("    if(key==='HUMID'){let v=parseFloat(val[0]),st=val[1];let hEl=document.getElementById('statusHumid');"));
-  client.println(F("      if(st==='ERR'){hEl.innerHTML='<b>Humid: ERR</b>';}else{let col=st==='OK'?'#27ae60':'#e74c3c';hEl.innerHTML='Humid: <b style=\"color:'+col+'\">'+v.toFixed(1)+'% RH '+st+'</b>';}}" ));
+  client.println(F("      if(st==='ERR'){hEl.innerHTML='<b>Humid: ERR</b>';}else{let col=st==='OK'?'#27ae60':'#e74c3c';hEl.innerHTML='Humid: <b style=\"color:'+col+'\">'+v.toFixed(1)+'% RH '+st+'</b>';}}"));
   client.println(F("  });"));
   client.println(F("}catch(e){handleDisconnect();}}"));
 
   client.println(F("async function pollThresholds(){try{"));
-  client.println(F("  let rt=await safeFetch('/skit/threshold/temp?t='+Date.now());if(rt){let v=parseFloat(await rt.text());if(!isNaN(v)){tempThresh=v;document.getElementById('threshTempVal').textContent=v.toFixed(1);}}"));
-  client.println(F("  let rh=await safeFetch('/skit/threshold/humid?t='+Date.now());if(rh){let v=parseFloat(await rh.text());if(!isNaN(v)){humidThresh=v;document.getElementById('threshHumidVal').textContent=v.toFixed(1);}}"));
+  client.println(F("  let rt=await safeFetch(THRESH_T_URL+'?t='+Date.now());if(rt){let v=parseFloat(await rt.text());if(!isNaN(v)){tempThresh=v;document.getElementById('threshTempVal').textContent=v.toFixed(1);}}"));
+  client.println(F("  let rh=await safeFetch(THRESH_H_URL+'?t='+Date.now());if(rh){let v=parseFloat(await rh.text());if(!isNaN(v)){humidThresh=v;document.getElementById('threshHumidVal').textContent=v.toFixed(1);}}"));
   client.println(F("}catch(e){}}"));
 
   client.println(F("async function adjustThresh(type,delta){"));
-  client.println(F("  if(type==='temp'){tempThresh=Math.round((tempThresh+delta)*10)/10;document.getElementById('threshTempVal').textContent=tempThresh.toFixed(1);await fetch('/skit/threshold/temp?v='+tempThresh,{method:'POST'});}"));
-  client.println(F("  else{humidThresh=Math.round((humidThresh+delta)*10)/10;document.getElementById('threshHumidVal').textContent=humidThresh.toFixed(1);await fetch('/skit/threshold/humid?v='+humidThresh,{method:'POST'});}"));
+  client.println(F("  if(type==='temp'){tempThresh=Math.round((tempThresh+delta)*10)/10;document.getElementById('threshTempVal').textContent=tempThresh.toFixed(1);await fetch(THRESH_T_URL+'?v='+tempThresh,{method:'POST'});}"));
+  client.println(F("  else{humidThresh=Math.round((humidThresh+delta)*10)/10;document.getElementById('threshHumidVal').textContent=humidThresh.toFixed(1);await fetch(THRESH_H_URL+'?v='+humidThresh,{method:'POST'});}"));
   client.println(F("  updateChartThreshLines();"));
   client.println(F("}"));
-
-  wdt_reset();
 
   client.println(F("function updateChartThreshLines(){"));
   client.println(F("  if(tempChart){let l=tempChart.data.labels.length;tempChart.data.datasets[1].data=Array(l).fill(tempThresh);tempChart.data.datasets[2].data=Array(l).fill(tempThresh+margin);tempChart.data.datasets[3].data=Array(l).fill(tempThresh-margin);tempChart.update();}"));
   client.println(F("  if(humidChart){let l=humidChart.data.labels.length;humidChart.data.datasets[1].data=Array(l).fill(humidThresh);humidChart.data.datasets[2].data=Array(l).fill(humidThresh+margin);humidChart.data.datasets[3].data=Array(l).fill(humidThresh-margin);humidChart.update();}"));
   client.println(F("}"));
 
+  wdt_reset();
+
   client.println(F("async function fetchData(csvUrl,rangeDays){"));
-  client.println(F("  let r=await safeFetch(csvUrl+'?t='+Date.now());if(!r||!r.ok)return{labels:[],vals:[],avgData:[]};"));
+  client.println(F("  let r=await safeFetch(csvUrl+'?t='+Date.now());if(!r||!r.ok)return{labels:[],vals:[]};"));
   client.println(F("  let txt=await r.text();let lines=txt.trim().split('\\n').slice(1);"));
-  client.println(F("  let limit=Date.now()-rangeDays*86400000;"));
-  client.println(F("  let labels=[],vals=[];"));
+  client.println(F("  let limit=Date.now()-rangeDays*86400000;let labels=[],vals=[];"));
   client.println(F("  let ds=rangeDays<=1?1:rangeDays<=3?6:12;"));
   client.println(F("  lines.forEach((line,idx)=>{if(idx%ds!==0)return;let[date,time,v]=line.split(',');if(!date||!time)return;"));
   client.println(F("    let dt=new Date(date.split('-').join('/')+' '+time);"));
   client.println(F("    if(dt.getTime()>=limit){labels.push(dt.getTime());vals.push(parseFloat(v)||null);}"));
-  client.println(F("  });"));
-  client.println(F("  return{labels,vals};"));
+  client.println(F("  });return{labels,vals};"));
   client.println(F("}"));
 
   client.println(F("async function updateCharts(){if(isOffline)return;"));
   client.println(F("  let rT=parseInt(document.getElementById('tempRange').value);"));
   client.println(F("  let rH=parseInt(document.getElementById('humidRange').value);"));
   client.println(F("  let fmtT=rT>1?'MMM d, HH:mm':'HH:mm';let fmtH=rH>1?'MMM d, HH:mm':'HH:mm';"));
-  client.println(F("  let td=await fetchData('/skit/temp.csv',rT);let hd=await fetchData('/skit/humid.csv',rH);"));
+  client.println(F("  let td=await fetchData(TEMP_CSV_URL,rT);let hd=await fetchData(HUMID_CSV_URL,rH);"));
 
   client.println(F("  if(td.labels.length>0){if(tempChart)tempChart.destroy();"));
   client.println(F("    tempChart=new Chart(document.getElementById('tempChart'),{type:'line',data:{labels:td.labels,datasets:["));
-  client.println(F("      {label:'Skit Temp',data:td.vals,borderColor:'#0072B2',backgroundColor:'#0072B2',fill:false,borderWidth:2,pointRadius:0,pointHoverRadius:4},"));
+  client.print(F("      {label:ROOM_NAME+' Temp',data:td.vals,borderColor:TEMP_COLOR,backgroundColor:TEMP_COLOR,fill:false,borderWidth:2,pointRadius:0,pointHoverRadius:4},"));
+  client.println(F(""));
   client.println(F("      {label:'Threshold',data:Array(td.labels.length).fill(tempThresh),borderColor:'black',borderDash:[5,5],pointRadius:0},"));
   client.println(F("      {label:'High',data:Array(td.labels.length).fill(tempThresh+margin),borderColor:'gray',borderDash:[2,2],pointRadius:0},"));
   client.println(F("      {label:'Low',data:Array(td.labels.length).fill(tempThresh-margin),borderColor:'gray',borderDash:[2,2],pointRadius:0}"));
@@ -1065,7 +1105,8 @@ void serveSkitPage(EthernetClient &client) {
 
   client.println(F("  if(hd.labels.length>0){if(humidChart)humidChart.destroy();"));
   client.println(F("    humidChart=new Chart(document.getElementById('humidChart'),{type:'line',data:{labels:hd.labels,datasets:["));
-  client.println(F("      {label:'Skit Humid',data:hd.vals,borderColor:'#E69F00',backgroundColor:'#E69F00',fill:false,borderWidth:2,pointRadius:0,pointHoverRadius:4},"));
+  client.print(F("      {label:ROOM_NAME+' Humid',data:hd.vals,borderColor:HUMID_COLOR,backgroundColor:HUMID_COLOR,fill:false,borderWidth:2,pointRadius:0,pointHoverRadius:4},"));
+  client.println(F(""));
   client.println(F("      {label:'Threshold',data:Array(hd.labels.length).fill(humidThresh),borderColor:'black',borderDash:[5,5],pointRadius:0},"));
   client.println(F("      {label:'High',data:Array(hd.labels.length).fill(humidThresh+margin),borderColor:'gray',borderDash:[2,2],pointRadius:0},"));
   client.println(F("      {label:'Low',data:Array(hd.labels.length).fill(humidThresh-margin),borderColor:'gray',borderDash:[2,2],pointRadius:0}"));
@@ -1078,7 +1119,7 @@ void serveSkitPage(EthernetClient &client) {
   client.println(F("  updateLastUpdate();"));
   client.println(F("}"));
 
-  client.println(F("async function pollSysInfo(){if(isOffline)return;try{const r=await safeFetch('/skit/sysinfo?t='+Date.now());if(!r)return;const txt=await r.text();const p={};"));
+  client.println(F("async function pollSysInfo(){if(isOffline)return;try{const r=await safeFetch(SYSINFO_URL+'?t='+Date.now());if(!r)return;const txt=await r.text();const p={};"));
   client.println(F("  txt.trim().split(',').forEach(x=>{const i=x.indexOf(':');if(i!==-1)p[x.substring(0,i).trim()]=x.substring(i+1).trim();});"));
   client.println(F("  const ram=parseInt(p['RAM']||0);const rc=ram>2000?'#2ecc71':ram>1000?'#f39c12':'#e74c3c';"));
   client.println(F("  const re=document.getElementById('sysRam');if(re)re.innerHTML='RAM: <span style=\"color:'+rc+';font-weight:bold;\">'+(ram/1024).toFixed(1)+' KB</span>';"));
@@ -1096,14 +1137,14 @@ void serveSkitPage(EthernetClient &client) {
   client.println(F("  btn.disabled=true;let csv='Date,Time,Value\\n',found=0;"));
   client.println(F("  for(let i=0;i<=diff;i++){let c=new Date(d1.getTime()+i*86400000);"));
   client.println(F("    let y=c.getFullYear().toString().slice(-2),m=(c.getMonth()+1).toString().padStart(2,'0'),d=c.getDate().toString().padStart(2,'0');"));
-  client.println(F("    let fn=y+m+d+'_SK_'+dt+'.csv';prog.innerText='Fetching '+(i+1)+'/'+(diff+1)+'...';"));
+  client.println(F("    let fn=y+m+d+FILE_PREFIX+(dt==='T'?'T':'H')+'.csv';prog.innerText='Fetching '+(i+1)+'/'+(diff+1)+'...';"));
   client.println(F("    try{let r=await safeFetch('/archive?file='+fn);if(r&&r.ok){let t=await r.text();let l=t.trim().split('\\n');if(l.length>1){csv+=l.slice(1).join('\\n')+'\\n';found++;}}}catch(e){}"));
   client.println(F("    await new Promise(res=>setTimeout(res,100));"));
   client.println(F("  }"));
   client.println(F("  btn.disabled=false;prog.innerText='Done!';setTimeout(()=>prog.innerText='',3000);"));
   client.println(F("  if(!found){alert('No data found.');return;}"));
   client.println(F("  const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);"));
-  client.println(F("  const a=document.createElement('a');a.href=url;a.download='Skit_'+dt+'_'+s+'_to_'+e+'.csv';a.click();URL.revokeObjectURL(url);"));
+  client.println(F("  const a=document.createElement('a');a.href=url;a.download=DL_PREFIX+'_'+dt+'_'+s+'_to_'+e+'.csv';a.click();URL.revokeObjectURL(url);"));
   client.println(F("}"));
 
   client.println(F("function updateLastUpdate(){const n=new Date();const pad=v=>String(v).padStart(2,'0');document.getElementById('lastUpdate').textContent=n.getFullYear()+'-'+pad(n.getMonth()+1)+'-'+pad(n.getDate())+' '+pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());}"));
@@ -1118,243 +1159,23 @@ void serveSkitPage(EthernetClient &client) {
   client.println(F("</script></body></html>"));
 }
 
-// ============================================================
-// CAMERA ROOM — Dashboard page (mirrors Skit page with Camera endpoints)
-// ============================================================
+// Thin wrappers — called from Aging_Room.ino router
+void serveSkitPage(EthernetClient &client) {
+  extern float skitTempThreshold, skitHumidThreshold;
+  serveRoomPage(client,
+    "Skit Room", "/skit", "S",
+    "#0072B2", "#E69F00",
+    "Skit",
+    skitTempThreshold, skitHumidThreshold,
+    "skit");
+}
+
 void serveCameraPage(EthernetClient &client) {
-  extern unsigned long currentEpoch;
   extern float camTempThreshold, camHumidThreshold;
-  int _y, _mo, _d, _h, _mi, _s, _wd;
-  epochToDateTime(currentEpoch, _y, _mo, _d, _h, _mi, _s, _wd);
-  char lastUpdate[20];
-  snprintf(lastUpdate, sizeof(lastUpdate), "%04d-%02d-%02d %02d:%02d:%02d", _y, _mo+1, _d, _h, _mi, _s);
-
-  client.println(F("HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: close\n"));
-  client.println(F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"));
-  client.println(F("<title>Camera Room</title>"));
-  client.println(F("<style>"));
-  client.println(F("body{font-family:sans-serif;background:#f4f4f4;padding:12px 16px;box-sizing:border-box;margin:0;}"));
-  client.println(F(".tab{display:inline-block;padding:10px 20px;margin:5px;background:#ccc;cursor:pointer;border-radius:4px;}"));
-  client.println(F(".tab.active{background:#999;color:#fff;font-weight:bold;}"));
-  client.println(F(".tab-content{display:none;} .tab-content.active{display:block;}"));
-  client.println(F("button{margin-left:10px;padding:6px 12px;cursor:pointer;}"));
-  client.println(F(".chart-scroll-wrapper{width:100%;background:#fff;border-radius:6px;padding:10px;box-sizing:border-box;}"));
-  client.println(F(".chart-scroll-wrapper canvas{height:500px !important;display:block;}"));
-  client.println(F("#statusBar{display:flex;gap:20px;align-items:center;padding:12px 16px;margin-bottom:12px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:15px;flex-wrap:wrap;}"));
-  client.println(F(".nav-bar{display:flex;gap:10px;margin-bottom:16px;}"));
-  client.println(F(".nav-btn{padding:8px 16px;background:#2980b9;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;}"));
-  client.println(F(".nav-btn.active{background:#1a5276;}"));
-  client.println(F(".thresh-panel{background:#fff;border-radius:6px;border:1px solid #ddd;padding:12px 16px;margin-top:16px;font-size:14px;}"));
-  client.println(F("</style>"));
-  client.println(F("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"));
-  client.println(F("<script src='https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js'></script>"));
-  client.println(F("<script src='https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js'></script>"));
-  client.println(F("<script src='https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js'></script>"));
-  client.println(F("</head><body>"));
-
-  wdt_reset();
-
-  // Navigation bar
-  client.println(F("<div class='nav-bar'>"));
-  client.println(F("<a class='nav-btn' href='/'>Aging Room</a>"));
-  client.println(F("<a class='nav-btn' href='/skit'>Skit Room</a>"));
-  client.println(F("<a class='nav-btn active' href='/camera'>Camera Room</a>"));
-  client.println(F("</div>"));
-
-  client.println(F("<h2>Camera Room</h2>"));
-  client.println(F("<div style='margin-bottom:20px;font-size:14px;color:#555;'>"));
-  client.print(F("Last update: <strong id='lastUpdate' style='color:#000;'>"));
-  client.print(lastUpdate);
-  client.println(F("</strong></div>"));
-
-  client.println(F("<div id='statusBar'><strong>Sensor:</strong>"));
-  client.println(F("<span id='statusTemp'>Temp: --</span>"));
-  client.println(F("<span id='statusHumid'>Humid: --</span>"));
-  client.println(F("</div>"));
-
-  client.println(F("<div>"));
-  client.println(F("<div class='tab active' onclick=\"showTab('temp',event)\">Temperature</div>"));
-  client.println(F("<div class='tab' onclick=\"showTab('humid',event)\">Humidity</div>"));
-  client.println(F("<div class='tab' onclick=\"showTab('archive',event)\">Archive Data</div>"));
-  client.println(F("</div>"));
-
-  wdt_reset();
-
-  client.println(F("<div id='temp' class='tab-content active'>"));
-  client.println(F("<label>Range: <select id='tempRange'><option value='1' selected>1</option><option value='3'>3</option><option value='5'>5</option><option value='7'>7</option></select> days</label>"));
-  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
-  client.println(F("<button onclick='if(tempChart&&tempChart.resetZoom)tempChart.resetZoom()'>Reset Zoom</button>"));
-  client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='tempChart'></canvas></div></div>"));
-
-  client.println(F("<div id='humid' class='tab-content'>"));
-  client.println(F("<label>Range: <select id='humidRange'><option value='1' selected>1</option><option value='3'>3</option><option value='5'>5</option><option value='7'>7</option></select> days</label>"));
-  client.println(F("<button onclick='updateCharts()'>Update Now</button>"));
-  client.println(F("<button onclick='if(humidChart&&humidChart.resetZoom)humidChart.resetZoom()'>Reset Zoom</button>"));
-  client.println(F("<br><br><div class='chart-scroll-wrapper'><canvas id='humidChart'></canvas></div></div>"));
-
-  client.println(F("<div id='archive' class='tab-content'>"));
-  client.println(F("  <div style='background:#fff;padding:20px;border-radius:6px;border:1px solid #ddd;margin-top:10px;'>"));
-  client.println(F("    <h3 style='margin-top:0;'>Download Historical Data (Up to 6 Months)</h3>"));
-  client.println(F("    <label><b>From:</b> <input type='date' id='startDate' style='padding:6px;border:1px solid #ccc;border-radius:4px;'></label>"));
-  client.println(F("    <label style='margin-left:15px;'><b>To:</b> <input type='date' id='endDate' style='padding:6px;border:1px solid #ccc;border-radius:4px;'></label><br><br>"));
-  client.println(F("    <label><b>Data Type:</b> <select id='dataType' style='padding:6px;border:1px solid #ccc;border-radius:4px;'><option value='T'>Temperature</option><option value='H'>Humidity</option></select></label><br><br>"));
-  client.println(F("    <button id='dlButton' onclick='downloadDateRange()' style='padding:10px 16px;font-weight:bold;background:#2980b9;color:white;border:none;border-radius:4px;cursor:pointer;'>Download CSV</button>"));
-  client.println(F("    <span id='dlProgress' style='margin-left:10px;font-weight:bold;color:#27ae60;'></span>"));
-  client.println(F("  </div></div>"));
-
-  wdt_reset();
-
-  client.println(F("<div id='sysPanel' style='margin-top:16px;padding:12px 16px;background:#fff;border-radius:6px;border:1px solid #ddd;font-size:14px;'>"));
-  client.println(F("<div style='font-weight:bold;margin-bottom:8px;font-size:15px;'>System Status</div>"));
-  client.println(F("<div style='display:flex;flex-wrap:wrap;gap:20px;'>"));
-  client.println(F("<span id='sysRam'>RAM: --</span> <span id='sysUptime'>&#9201; Uptime: --</span> <span id='sysSd'>&#128190; SD: --</span>"));
-  client.println(F("</div><div style='display:flex;flex-wrap:wrap;gap:20px;margin-top:6px;'>"));
-  client.println(F("<span id='sysReceive'>&#128225; Last Receive: --</span> <span id='sysNtp'>&#128336; NTP Sync: --</span>"));
-  client.println(F("</div></div>"));
-
-  client.println(F("<div class='thresh-panel'>"));
-  client.println(F("<div style='font-weight:bold;margin-bottom:10px;font-size:15px;'>Threshold Adjustment</div>"));
-  client.println(F("<div style='display:flex;gap:30px;flex-wrap:wrap;'>"));
-  client.println(F("<div><b>Temperature</b><br>"));
-  client.println(F("<button onclick='adjustThresh(\"temp\",-1)'>&#9660;</button>"));
-  client.println(F("<span id='threshTempVal' style='margin:0 10px;font-size:16px;font-weight:bold;'>--</span>°C"));
-  client.println(F("<button onclick='adjustThresh(\"temp\",1)'>&#9650;</button></div>"));
-  client.println(F("<div><b>Humidity</b><br>"));
-  client.println(F("<button onclick='adjustThresh(\"humid\",-1)'>&#9660;</button>"));
-  client.println(F("<span id='threshHumidVal' style='margin:0 10px;font-size:16px;font-weight:bold;'>--</span>%"));
-  client.println(F("<button onclick='adjustThresh(\"humid\",1)'>&#9650;</button></div>"));
-  client.println(F("</div></div>"));
-
-  wdt_reset();
-
-  client.println(F("<script>"));
-  client.println(F("let tempChart, humidChart;"));
-  client.print(F("let tempThresh = ")); client.print(camTempThreshold, 1); client.println(F(";"));
-  client.print(F("let humidThresh = ")); client.print(camHumidThreshold, 1); client.println(F(";"));
-  client.println(F("const margin = 5.0;"));
-  client.println(F("let isOffline = false; let failedPings = 0;"));
-
-  client.println(F("const warnBanner = document.createElement('div');"));
-  client.println(F("warnBanner.style.cssText = 'display:none;background:#f1c40f;color:#856404;padding:15px;text-align:center;font-weight:bold;font-size:16px;position:fixed;top:0;left:0;width:100%;z-index:9999;';"));
-  client.println(F("warnBanner.innerHTML = '&#9888;&#65039; SYSTEM OFFLINE: Connection lost. Auto-reconnecting...';"));
-  client.println(F("document.body.prepend(warnBanner);"));
-
-  client.println(F("function handleDisconnect(){failedPings++;if(failedPings>=3){if(isOffline)return;isOffline=true;warnBanner.style.display='block';setTimeout(checkReconnect,4000);}}"));
-  client.println(F("async function checkReconnect(){try{let r=await fetch('/camera/status?t='+Date.now());if(r.ok||r.status===401){isOffline=false;failedPings=0;warnBanner.style.display='none';pollStatus();pollSysInfo();}else setTimeout(checkReconnect,4000);}catch(e){setTimeout(checkReconnect,4000);}}"));
-  client.println(F("async function safeFetch(url){if(isOffline&&!url.includes('/status'))return null;try{let r=await fetch(url);if(!r.ok&&r.status!==404&&r.status!==401)throw new Error('Bad');failedPings=0;return r;}catch(e){handleDisconnect();return null;}}"));
-  client.println(F("function showTab(id,evt){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));document.getElementById(id).classList.add('active');evt.target.classList.add('active');}"));
-
-  wdt_reset();
-
-  client.println(F("async function pollStatus(){if(isOffline)return;try{let r=await safeFetch('/camera/status?t='+Date.now());if(!r)return;let txt=await r.text();"));
-  client.println(F("  let parts=txt.trim().split(',');"));
-  client.println(F("  parts.forEach(p=>{let ci=p.indexOf(':');if(ci===-1)return;let key=p.substring(0,ci),val=p.substring(ci+1).split('|');"));
-  client.println(F("    if(key==='TEMP'){let v=parseFloat(val[0]),st=val[1];let tEl=document.getElementById('statusTemp');"));
-  client.println(F("      if(st==='ERR'){tEl.innerHTML='<b>Temp: ERR</b>';}else{let f=(v*9/5+32).toFixed(1);let col=st==='OK'?'#27ae60':'#e74c3c';tEl.innerHTML='Temp: <b style=\"color:'+col+'\">'+v.toFixed(1)+'°C ('+f+'°F) '+st+'</b>';}}" ));
-  client.println(F("    if(key==='HUMID'){let v=parseFloat(val[0]),st=val[1];let hEl=document.getElementById('statusHumid');"));
-  client.println(F("      if(st==='ERR'){hEl.innerHTML='<b>Humid: ERR</b>';}else{let col=st==='OK'?'#27ae60':'#e74c3c';hEl.innerHTML='Humid: <b style=\"color:'+col+'\">'+v.toFixed(1)+'% RH '+st+'</b>';}}" ));
-  client.println(F("  });"));
-  client.println(F("}catch(e){handleDisconnect();}}"));
-
-  client.println(F("async function pollThresholds(){try{"));
-  client.println(F("  let rt=await safeFetch('/camera/threshold/temp?t='+Date.now());if(rt){let v=parseFloat(await rt.text());if(!isNaN(v)){tempThresh=v;document.getElementById('threshTempVal').textContent=v.toFixed(1);}}"));
-  client.println(F("  let rh=await safeFetch('/camera/threshold/humid?t='+Date.now());if(rh){let v=parseFloat(await rh.text());if(!isNaN(v)){humidThresh=v;document.getElementById('threshHumidVal').textContent=v.toFixed(1);}}"));
-  client.println(F("}catch(e){}}"));
-
-  client.println(F("async function adjustThresh(type,delta){"));
-  client.println(F("  if(type==='temp'){tempThresh=Math.round((tempThresh+delta)*10)/10;document.getElementById('threshTempVal').textContent=tempThresh.toFixed(1);await fetch('/camera/threshold/temp?v='+tempThresh,{method:'POST'});}"));
-  client.println(F("  else{humidThresh=Math.round((humidThresh+delta)*10)/10;document.getElementById('threshHumidVal').textContent=humidThresh.toFixed(1);await fetch('/camera/threshold/humid?v='+humidThresh,{method:'POST'});}"));
-  client.println(F("  updateChartThreshLines();"));
-  client.println(F("}"));
-
-  client.println(F("function updateChartThreshLines(){"));
-  client.println(F("  if(tempChart){let l=tempChart.data.labels.length;tempChart.data.datasets[1].data=Array(l).fill(tempThresh);tempChart.data.datasets[2].data=Array(l).fill(tempThresh+margin);tempChart.data.datasets[3].data=Array(l).fill(tempThresh-margin);tempChart.update();}"));
-  client.println(F("  if(humidChart){let l=humidChart.data.labels.length;humidChart.data.datasets[1].data=Array(l).fill(humidThresh);humidChart.data.datasets[2].data=Array(l).fill(humidThresh+margin);humidChart.data.datasets[3].data=Array(l).fill(humidThresh-margin);humidChart.update();}"));
-  client.println(F("}"));
-
-  client.println(F("async function fetchData(csvUrl,rangeDays){"));
-  client.println(F("  let r=await safeFetch(csvUrl+'?t='+Date.now());if(!r||!r.ok)return{labels:[],vals:[]};"));
-  client.println(F("  let txt=await r.text();let lines=txt.trim().split('\\n').slice(1);"));
-  client.println(F("  let limit=Date.now()-rangeDays*86400000;let labels=[],vals=[];"));
-  client.println(F("  let ds=rangeDays<=1?1:rangeDays<=3?6:12;"));
-  client.println(F("  lines.forEach((line,idx)=>{if(idx%ds!==0)return;let[date,time,v]=line.split(',');if(!date||!time)return;"));
-  client.println(F("    let dt=new Date(date.split('-').join('/')+' '+time);"));
-  client.println(F("    if(dt.getTime()>=limit){labels.push(dt.getTime());vals.push(parseFloat(v)||null);}"));
-  client.println(F("  });return{labels,vals};"));
-  client.println(F("}"));
-
-  wdt_reset();
-
-  client.println(F("async function updateCharts(){if(isOffline)return;"));
-  client.println(F("  let rT=parseInt(document.getElementById('tempRange').value);"));
-  client.println(F("  let rH=parseInt(document.getElementById('humidRange').value);"));
-  client.println(F("  let fmtT=rT>1?'MMM d, HH:mm':'HH:mm';let fmtH=rH>1?'MMM d, HH:mm':'HH:mm';"));
-  client.println(F("  let td=await fetchData('/camera/temp.csv',rT);let hd=await fetchData('/camera/humid.csv',rH);"));
-
-  client.println(F("  if(td.labels.length>0){if(tempChart)tempChart.destroy();"));
-  client.println(F("    tempChart=new Chart(document.getElementById('tempChart'),{type:'line',data:{labels:td.labels,datasets:["));
-  client.println(F("      {label:'Camera Temp',data:td.vals,borderColor:'#CC79A7',backgroundColor:'#CC79A7',fill:false,borderWidth:2,pointRadius:0,pointHoverRadius:4},"));
-  client.println(F("      {label:'Threshold',data:Array(td.labels.length).fill(tempThresh),borderColor:'black',borderDash:[5,5],pointRadius:0},"));
-  client.println(F("      {label:'High',data:Array(td.labels.length).fill(tempThresh+margin),borderColor:'gray',borderDash:[2,2],pointRadius:0},"));
-  client.println(F("      {label:'Low',data:Array(td.labels.length).fill(tempThresh-margin),borderColor:'gray',borderDash:[2,2],pointRadius:0}"));
-  client.println(F("    ]},options:{responsive:true,maintainAspectRatio:false,"));
-  client.println(F("    scales:{x:{type:'time',time:{tooltipFormat:'yyyy-MM-dd HH:mm',displayFormats:{hour:fmtT,minute:fmtT,day:'MMM d'}},ticks:{maxRotation:45,minRotation:45,maxTicksLimit:24,font:{size:10}}},"));
-  client.println(F("    y:{title:{display:true,text:'Celsius (°C)',font:{size:13}},ticks:{stepSize:1.0}}},"));
-  client.println(F("    interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false},legend:{labels:{boxWidth:24,padding:16,font:{size:13}}},"));
-  client.println(F("    zoom:typeof ChartZoom!=='undefined'?{pan:{enabled:true,mode:'x'},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x'}}:{}}}});"));
-  client.println(F("  }"));
-
-  client.println(F("  if(hd.labels.length>0){if(humidChart)humidChart.destroy();"));
-  client.println(F("    humidChart=new Chart(document.getElementById('humidChart'),{type:'line',data:{labels:hd.labels,datasets:["));
-  client.println(F("      {label:'Camera Humid',data:hd.vals,borderColor:'#56B4E9',backgroundColor:'#56B4E9',fill:false,borderWidth:2,pointRadius:0,pointHoverRadius:4},"));
-  client.println(F("      {label:'Threshold',data:Array(hd.labels.length).fill(humidThresh),borderColor:'black',borderDash:[5,5],pointRadius:0},"));
-  client.println(F("      {label:'High',data:Array(hd.labels.length).fill(humidThresh+margin),borderColor:'gray',borderDash:[2,2],pointRadius:0},"));
-  client.println(F("      {label:'Low',data:Array(hd.labels.length).fill(humidThresh-margin),borderColor:'gray',borderDash:[2,2],pointRadius:0}"));
-  client.println(F("    ]},options:{responsive:true,maintainAspectRatio:false,"));
-  client.println(F("    scales:{x:{type:'time',time:{tooltipFormat:'yyyy-MM-dd HH:mm',displayFormats:{hour:fmtH,minute:fmtH,day:'MMM d'}},ticks:{maxRotation:45,minRotation:45,maxTicksLimit:24,font:{size:10}}},"));
-  client.println(F("    y:{title:{display:true,text:'Humidity (%)',font:{size:13}},ticks:{stepSize:1.0}}},"));
-  client.println(F("    interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false},legend:{labels:{boxWidth:24,padding:16,font:{size:13}}},"));
-  client.println(F("    zoom:typeof ChartZoom!=='undefined'?{pan:{enabled:true,mode:'x'},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x'}}:{}}}});"));
-  client.println(F("  }"));
-  client.println(F("  updateLastUpdate();"));
-  client.println(F("}"));
-
-  client.println(F("async function pollSysInfo(){if(isOffline)return;try{const r=await safeFetch('/camera/sysinfo?t='+Date.now());if(!r)return;const txt=await r.text();const p={};"));
-  client.println(F("  txt.trim().split(',').forEach(x=>{const i=x.indexOf(':');if(i!==-1)p[x.substring(0,i).trim()]=x.substring(i+1).trim();});"));
-  client.println(F("  const ram=parseInt(p['RAM']||0);const rc=ram>2000?'#2ecc71':ram>1000?'#f39c12':'#e74c3c';"));
-  client.println(F("  const re=document.getElementById('sysRam');if(re)re.innerHTML='RAM: <span style=\"color:'+rc+';font-weight:bold;\">'+(ram/1024).toFixed(1)+' KB</span>';"));
-  client.println(F("  const ue=document.getElementById('sysUptime');if(ue)ue.innerHTML='&#9201; Uptime: <span style=\"color:#27ae60;font-weight:bold;\">'+(p['UPTIME']||'--')+'</span>';"));
-  client.println(F("  const se=document.getElementById('sysSd');if(se){se.textContent='SD: '+(p['SD']||'--');se.style.color=p['SD']==='OK'?'#27ae60':'#e74c3c';}"));
-  client.println(F("  const lre=document.getElementById('sysReceive');if(lre)lre.innerHTML='&#128225; Last Receive: <span style=\"color:#27ae60;font-weight:bold;\">'+(p['LASTRECEIVE']||'--')+'</span>';"));
-  client.println(F("  const ne=document.getElementById('sysNtp');if(ne)ne.innerHTML='&#128336; NTP Sync: <span style=\"color:#27ae60;font-weight:bold;\">'+(p['NTPSYNC']||'--')+'</span>';"));
-  client.println(F("}catch(e){handleDisconnect();}}"));
-
-  client.println(F("async function downloadDateRange(){if(isOffline)return;"));
-  client.println(F("  const s=document.getElementById('startDate').value,e=document.getElementById('endDate').value,dt=document.getElementById('dataType').value;"));
-  client.println(F("  if(!s||!e){alert('Select dates.');return;}const d1=new Date(s+'T12:00:00'),d2=new Date(e+'T12:00:00');"));
-  client.println(F("  if(d1>d2){alert('Start must be before End.');return;}const diff=Math.round((d2-d1)/86400000);if(diff>180){alert('Max 6 months.');return;}"));
-  client.println(F("  const btn=document.getElementById('dlButton'),prog=document.getElementById('dlProgress');"));
-  client.println(F("  btn.disabled=true;let csv='Date,Time,Value\\n',found=0;"));
-  client.println(F("  for(let i=0;i<=diff;i++){let c=new Date(d1.getTime()+i*86400000);"));
-  client.println(F("    let y=c.getFullYear().toString().slice(-2),m=(c.getMonth()+1).toString().padStart(2,'0'),d=c.getDate().toString().padStart(2,'0');"));
-  client.println(F("    let fn=y+m+d+'_CA_'+dt+'.csv';prog.innerText='Fetching '+(i+1)+'/'+(diff+1)+'...';"));
-  client.println(F("    try{let r=await safeFetch('/archive?file='+fn);if(r&&r.ok){let t=await r.text();let l=t.trim().split('\\n');if(l.length>1){csv+=l.slice(1).join('\\n')+'\\n';found++;}}}catch(e){}"));
-  client.println(F("    await new Promise(res=>setTimeout(res,100));"));
-  client.println(F("  }"));
-  client.println(F("  btn.disabled=false;prog.innerText='Done!';setTimeout(()=>prog.innerText='',3000);"));
-  client.println(F("  if(!found){alert('No data found.');return;}"));
-  client.println(F("  const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);"));
-  client.println(F("  const a=document.createElement('a');a.href=url;a.download='Camera_'+dt+'_'+s+'_to_'+e+'.csv';a.click();URL.revokeObjectURL(url);"));
-  client.println(F("}"));
-
-  client.println(F("function updateLastUpdate(){const n=new Date();const pad=v=>String(v).padStart(2,'0');document.getElementById('lastUpdate').textContent=n.getFullYear()+'-'+pad(n.getMonth()+1)+'-'+pad(n.getDate())+' '+pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());}"));
-
-  client.println(F("async function bootUp(){"));
-  client.println(F("  document.getElementById('tempRange').addEventListener('change',updateCharts);"));
-  client.println(F("  document.getElementById('humidRange').addEventListener('change',updateCharts);"));
-  client.println(F("  try{await updateCharts();await pollStatus();await pollSysInfo();await pollThresholds();}catch(e){}"));
-  client.println(F("  setInterval(updateCharts,307000);setInterval(pollStatus,29000);setInterval(pollSysInfo,31000);setInterval(pollThresholds,37000);"));
-  client.println(F("}"));
-  client.println(F("setTimeout(bootUp,2000);"));
-  client.println(F("</script></body></html>"));
+  serveRoomPage(client,
+    "Camera Room", "/camera", "C",
+    "#CC79A7", "#56B4E9",
+    "Camera",
+    camTempThreshold, camHumidThreshold,
+    "camera");
 }
