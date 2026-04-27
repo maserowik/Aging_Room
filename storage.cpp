@@ -93,16 +93,17 @@ void appendCsvData() {
 
   // --- Skit Room ---
   extern float tSkit, hSkit;
-  Serial.print(F("CSV write tSkit=")); Serial.println(tSkit);
+  //Serial.print(F("CSV write tSkit=")); Serial.println(tSkit);
   char skTFile[13]; snprintf(skTFile, sizeof(skTFile), "%sST.csv", ymd);
   char skHFile[13]; snprintf(skHFile, sizeof(skHFile), "%sSH.csv", ymd);
-  Serial.print(F("SK file: ")); Serial.println(skTFile);
+  //Serial.print(F("SK file: ")); Serial.println(skTFile);
 
   if (!SD.exists(skTFile)) {
     File f = SD.open(skTFile, FILE_WRITE);
-    if (f) { f.println("Date,Time,Skit"); f.close(); Serial.println(F("SK header written")); }
-    else { Serial.println(F("SK header FAILED")); }
-  } else { Serial.println(F("SK file exists")); }
+    if (f) { f.println("Date,Time,Skit"); f.close(); }
+    //else { Serial.println(F("SK header FAILED")); }
+  }
+  //else { Serial.println(F("SK file exists")); }
 
   File skT = SD.open(skTFile, FILE_WRITE);
   if (skT) {
@@ -110,8 +111,9 @@ void appendCsvData() {
     skT.print(dateStr); skT.print(","); skT.print(timeStr); skT.print(",");
     if (isnan(tSkit)) { skT.print("ERR"); } else { dtostrf(tSkit, 4, 1, buf); skT.print(buf); skT.print(" C"); }
     skT.println(); skT.close(); wdt_reset();
-    Serial.println(F("SK data written"));
-  } else { Serial.println(F("SK data open FAILED")); }
+    //Serial.println(F("SK data written"));
+  }
+  //else { Serial.println(F("SK data open FAILED")); }
 
   File skH = SD.open(skHFile, FILE_WRITE);
   if (skH) {
@@ -545,14 +547,14 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("  records.forEach(rec => {"));
   client.println(F("    const colonIdx = rec.indexOf(':'); if (colonIdx === -1) return;"));
   client.println(F("    const label = rec.substring(0, colonIdx).trim(); const parts = rec.substring(colonIdx + 1).trim().split('|');"));
-  client.println(F("    const tempC = parts[0], state = parts[1], humid = parts[2];"));
+  client.println(F("    const tempC = parts[0], state = parts[1], humid = parts.length > 2 ? parts[2] : null;"));
   client.println(F("    const isErr = state === 'ERR', isOk = state === 'OK', isLow = state === 'LOW', isHigh = state === 'HIGH';"));
   client.println(F("    const info = sensorMap[label]; if (!info) return;"));
   client.println(F("    const el = document.getElementById('statusSensor' + label);"));
   client.println(F("    if (el) {"));
   client.println(F("      el.querySelector('.sensor-dot').className = 'sensor-dot ' + info.idClass + (isErr ? ' dot-err' : !isOk ? ' dot-warn' : '');"));
   client.println(F("      const lbl = el.querySelector('.sensor-label'); lbl.className = 'sensor-label ' + info.idClass + (isErr ? ' sensor-err' : !isOk ? ' sensor-warn' : '');"));
-  client.println(F("      if (isErr) { lbl.textContent = label + ' ERR'; el.querySelector('.sensor-temp').textContent = ''; }"));
+  client.println(F("      if (isErr) { lbl.textContent = label + ' ERR'; const ste = el.querySelector('.sensor-temp'); if (ste) ste.textContent = ''; }"));
   client.println(F("      else {"));
   client.println(F("        lbl.textContent = label;"));
   client.println(F("        const cVal = parseFloat(tempC), fVal = (cVal * 9 / 5 + 32).toFixed(1);"));
@@ -714,17 +716,21 @@ void serveRootPage(EthernetClient &client) {
 
   client.println(F("  try {"));
   client.println(F("    await updateCharts();"));
+  client.println(F("    await new Promise(r => setTimeout(r, 500));"));
   client.println(F("    await pollStatus();"));
+  client.println(F("    await new Promise(r => setTimeout(r, 500));"));
   client.println(F("    await pollSysInfo();"));
+  client.println(F("    await new Promise(r => setTimeout(r, 500));"));
   client.println(F("    await pollThreshold();"));
+  client.println(F("    await new Promise(r => setTimeout(r, 500));"));
   client.println(F("    await pollEvents();"));
   client.println(F("  } catch(e) { console.log('Bootup interrupted, but UI active'); }"));
 
   client.println(F("  setInterval(updateCharts, 307000);"));
-  client.println(F("  setInterval(pollStatus, 29000);"));
-  client.println(F("  setInterval(pollSysInfo, 31000);"));
-  client.println(F("  setInterval(pollThreshold, 37000);"));
-  client.println(F("  setInterval(pollEvents, 53000);"));
+  client.println(F("  setTimeout(function(){ setInterval(pollStatus,    29000); }, 5000);"));
+  client.println(F("  setTimeout(function(){ setInterval(pollSysInfo,   31000); }, 10000);"));
+  client.println(F("  setTimeout(function(){ setInterval(pollThreshold, 37000); }, 15000);"));
+  client.println(F("  setTimeout(function(){ setInterval(pollEvents,    53000); }, 20000);"));
   client.println(F("}"));
 
   client.println(F("setTimeout(bootUp, 2000);"));
@@ -1152,8 +1158,19 @@ static void serveRoomPage(EthernetClient &client,
   client.println(F("async function bootUp(){"));
   client.println(F("  document.getElementById('tempRange').addEventListener('change',updateCharts);"));
   client.println(F("  document.getElementById('humidRange').addEventListener('change',updateCharts);"));
-  client.println(F("  try{await updateCharts();await pollStatus();await pollSysInfo();await pollThresholds();}catch(e){}"));
-  client.println(F("  setInterval(updateCharts,307000);setInterval(pollStatus,29000);setInterval(pollSysInfo,31000);setInterval(pollThresholds,37000);"));
+  client.println(F("  try{"));
+  client.println(F("    await updateCharts();"));
+  client.println(F("    await new Promise(r=>setTimeout(r,500));"));
+  client.println(F("    await pollStatus();"));
+  client.println(F("    await new Promise(r=>setTimeout(r,500));"));
+  client.println(F("    await pollSysInfo();"));
+  client.println(F("    await new Promise(r=>setTimeout(r,500));"));
+  client.println(F("    await pollThresholds();"));
+  client.println(F("  }catch(e){}"));
+  client.println(F("  setInterval(updateCharts,307000);"));
+  client.println(F("  setTimeout(function(){setInterval(pollStatus,    29000);},5000);"));
+  client.println(F("  setTimeout(function(){setInterval(pollSysInfo,   31000);},10000);"));
+  client.println(F("  setTimeout(function(){setInterval(pollThresholds,37000);},15000);"));
   client.println(F("}"));
   client.println(F("setTimeout(bootUp,2000);"));
   client.println(F("</script></body></html>"));
