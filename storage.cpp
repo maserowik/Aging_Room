@@ -93,17 +93,13 @@ void appendCsvData() {
 
   // --- Skit Room ---
   extern float tSkit, hSkit;
-  //Serial.print(F("CSV write tSkit=")); Serial.println(tSkit);
   char skTFile[13]; snprintf(skTFile, sizeof(skTFile), "%sST.csv", ymd);
   char skHFile[13]; snprintf(skHFile, sizeof(skHFile), "%sSH.csv", ymd);
-  //Serial.print(F("SK file: ")); Serial.println(skTFile);
 
   if (!SD.exists(skTFile)) {
     File f = SD.open(skTFile, FILE_WRITE);
     if (f) { f.println("Date,Time,Skit"); f.close(); }
-    //else { Serial.println(F("SK header FAILED")); }
   }
-  //else { Serial.println(F("SK file exists")); }
 
   File skT = SD.open(skTFile, FILE_WRITE);
   if (skT) {
@@ -111,9 +107,7 @@ void appendCsvData() {
     skT.print(dateStr); skT.print(","); skT.print(timeStr); skT.print(",");
     if (isnan(tSkit)) { skT.print("ERR"); } else { dtostrf(tSkit, 4, 1, buf); skT.print(buf); skT.print(" C"); }
     skT.println(); skT.close(); wdt_reset();
-    //Serial.println(F("SK data written"));
   }
-  //else { Serial.println(F("SK data open FAILED")); }
 
   File skH = SD.open(skHFile, FILE_WRITE);
   if (skH) {
@@ -573,7 +567,6 @@ void serveRootPage(EthernetClient &client) {
   client.println(F("    }"));
   client.println(F("    if (tempChart) { const ds = tempChart.data.datasets.find(d => d.label === 'Sensor ' + label); if (ds) { ds.borderColor = isErr ? '#e74c3c' : info.color; ds.backgroundColor = ds.borderColor; ds.pointBackgroundColor = ds.borderColor; } }"));
   client.println(F("  });"));
-  // Update AVG entry
   client.println(F("  const avgEl = document.getElementById('avgTemp');"));
   client.println(F("  if (avgEl) {"));
   client.println(F("    const avgT = cntT > 0 ? (sumT / cntT) : null;"));
@@ -744,7 +737,6 @@ void serveRootPage(EthernetClient &client) {
 void serveSkitStatus(EthernetClient &client) {
   extern float tSkit, hSkit, skitTempThreshold, skitHumidThreshold;
   client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n");
-  // Format: TEMP:value|state|humid  HUMID:value|state
   if (isnan(tSkit)) { client.print("TEMP:ERR|ERR"); }
   else {
     client.print("TEMP:"); client.print(tSkit, 1); client.print("|");
@@ -1195,4 +1187,150 @@ void serveCameraPage(EthernetClient &client) {
     "Camera",
     camTempThreshold, camHumidThreshold,
     "camera");
+}
+
+// ============================================================
+// ADMIN PAGE — Hidden SD card file manager
+// Route: GET /admin
+// Protected by existing Basic Auth (no nav link — URL only)
+// ============================================================
+void serveAdminPage(EthernetClient &client) {
+  extern unsigned long currentEpoch;
+
+  client.println(F("HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: close\n"));
+  client.println(F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"));
+  client.println(F("<title>Admin - SD Card Manager</title>"));
+  client.println(F("<style>"));
+  client.println(F("body{font-family:sans-serif;background:#1a1a2e;color:#e0e0e0;padding:20px;margin:0;}"));
+  client.println(F("h1{color:#e94560;margin-bottom:4px;}"));
+  client.println(F(".subtitle{color:#888;font-size:13px;margin-bottom:24px;}"));
+  client.println(F("table{width:100%;border-collapse:collapse;background:#16213e;border-radius:8px;overflow:hidden;}"));
+  client.println(F("th{background:#0f3460;color:#e0e0e0;padding:10px 14px;text-align:left;font-size:13px;}"));
+  client.println(F("td{padding:9px 14px;border-bottom:1px solid #0f3460;font-size:13px;vertical-align:middle;}"));
+  client.println(F("tr:last-child td{border-bottom:none;}"));
+  client.println(F("tr:hover td{background:#1a2a4a;}"));
+  client.println(F(".btn{display:inline-block;padding:4px 10px;border-radius:4px;text-decoration:none;font-size:12px;font-weight:bold;cursor:pointer;border:none;}"));
+  client.println(F(".dl{background:#0072B2;color:#fff;margin-right:4px;}"));
+  client.println(F(".del{background:#e94560;color:#fff;}"));
+  client.println(F(".del:hover{background:#c73652;}"));
+  client.println(F(".sz{color:#aaa;font-size:12px;}"));
+  client.println(F(".warn{background:#3a1a1a;border:1px solid #e94560;border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#e94560;}"));
+  client.println(F(".back{display:inline-block;margin-bottom:18px;color:#56B4E9;font-size:13px;text-decoration:none;}"));
+  client.println(F(".back:hover{text-decoration:underline;}"));
+  client.println(F(".empty{color:#666;padding:16px;text-align:center;}"));
+  client.println(F("</style></head><body>"));
+
+  client.println(F("<a class='back' href='/'>&#8592; Back to Aging Room</a>"));
+  client.println(F("<h1>&#9881; SD Card Admin</h1>"));
+  client.print(F("<div class='subtitle'>"));
+  if (currentEpoch > 1000000000UL) {
+    int y, mo, d, h, mi, s, wd;
+    epochToDateTime(currentEpoch, y, mo, d, h, mi, s, wd);
+    char ts[20];
+    snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d:%02d", y, mo+1, d, h, mi, s);
+    client.print(ts);
+  } else {
+    client.print(F("Time not synced"));
+  }
+  client.println(F(" &mdash; SD File Manager</div>"));
+
+  client.println(F("<div class='warn'>&#9888; Deleting files is permanent and cannot be undone.</div>"));
+
+  wdt_reset();
+
+  // --- Build file table by walking SD root ---
+  client.println(F("<table><tr><th>Filename</th><th>Size</th><th>Actions</th></tr>"));
+
+  File root = SD.open("/");
+  if (!root) {
+    client.println(F("<tr><td colspan='3' class='empty'>Could not open SD card root.</td></tr>"));
+  } else {
+    bool anyFiles = false;
+    while (true) {
+      File entry = root.openNextFile();
+      if (!entry) break;
+      if (entry.isDirectory()) { entry.close(); continue; }
+
+      anyFiles = true;
+      char fname[16];
+      strncpy(fname, entry.name(), 15);
+      fname[15] = '\0';
+      unsigned long fsize = entry.size();
+      entry.close();
+
+      wdt_reset();
+
+      client.print(F("<tr><td>"));
+      client.print(fname);
+      client.print(F("</td><td class='sz'>"));
+
+      // Human-readable size
+      if (fsize < 1024UL) {
+        client.print(fsize); client.print(F(" B"));
+      } else if (fsize < 1048576UL) {
+        client.print(fsize / 1024UL); client.print(F(" KB"));
+      } else {
+        client.print(fsize / 1048576UL); client.print(F(" MB"));
+      }
+
+      client.print(F("</td><td>"));
+      // Download button — reuses existing /archive endpoint
+      client.print(F("<a class='btn dl' href='/archive?file="));
+      client.print(fname);
+      client.print(F("'>&#11015; Download</a>"));
+      // Delete button
+      client.print(F("<a class='btn del' href='/admin/delete?file="));
+      client.print(fname);
+      client.print(F("' onclick=\"return confirm('Delete "));
+      client.print(fname);
+      client.print(F("?')\">&#128465; Delete</a>"));
+      client.println(F("</td></tr>"));
+    }
+    root.close();
+    if (!anyFiles) {
+      client.println(F("<tr><td colspan='3' class='empty'>No files found on SD card.</td></tr>"));
+    }
+  }
+
+  client.println(F("</table>"));
+  client.println(F("</body></html>"));
+}
+
+// ============================================================
+// ADMIN DELETE handler
+// Route: GET /admin/delete?file=FILENAME
+// ============================================================
+void handleAdminDelete(EthernetClient &client, const char *filename) {
+  if (filename == nullptr || strlen(filename) == 0) {
+    client.println(F("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nMissing filename."));
+    return;
+  }
+
+  // Safety: block deleting active live data files
+  if (strcmp(filename, "temp.csv")  == 0 ||
+      strcmp(filename, "humid.csv") == 0 ||
+      strcmp(filename, "SK_T.csv")  == 0 ||
+      strcmp(filename, "SK_H.csv")  == 0 ||
+      strcmp(filename, "CA_T.csv")  == 0 ||
+      strcmp(filename, "CA_H.csv")  == 0) {
+    client.println(F("HTTP/1.1 403 Forbidden\nContent-Type: text/html\nConnection: close\n"));
+    client.print(F("<h3>&#128683; Cannot delete active data file: "));
+    client.print(filename);
+    client.println(F("</h3><p>Use the /cleanup endpoint instead, or rename first.</p><a href='/admin'>Back</a>"));
+    return;
+  }
+
+  if (SD.exists(filename)) {
+    SD.remove(filename);
+    client.println(F("HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: close\n"));
+    client.print(F("<meta http-equiv='refresh' content='1;url=/admin'>"));
+    client.print(F("<p>&#9989; Deleted: "));
+    client.print(filename);
+    client.println(F("</p><a href='/admin'>Back to Admin</a>"));
+  } else {
+    client.println(F("HTTP/1.1 404 Not Found\nContent-Type: text/html\nConnection: close\n"));
+    client.print(F("<p>&#10060; File not found: "));
+    client.print(filename);
+    client.println(F("</p><a href='/admin'>Back to Admin</a>"));
+  }
 }

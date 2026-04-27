@@ -316,6 +316,20 @@ void loop() {
           else if (strncmp(httpRequest, "GET /camera/humid.csv", 21) == 0) serveFile(client, "CA_H.csv",  "text/csv");
           else if (strncmp(httpRequest, "GET /camera ",         12) == 0) serveCameraPage(client);
 
+          // --- Admin endpoints (hidden — no nav link) ---
+          else if (strncmp(httpRequest, "GET /admin/delete?file=", 23) == 0) {
+            // Extract filename from query string
+            char delFile[16];
+            delFile[0] = '\0';
+            uint8_t dfLen = 0;
+            for (uint8_t i = 23; i < httpRequestLen && httpRequest[i] != ' ' && dfLen < 15; i++) {
+              delFile[dfLen++] = httpRequest[i];
+            }
+            delFile[dfLen] = '\0';
+            handleAdminDelete(client, delFile);
+          }
+          else if (strncmp(httpRequest, "GET /admin", 10) == 0) serveAdminPage(client);
+
           else if (strncmp(httpRequest, "GET / ", 6) == 0) serveRootPage(client);
           else {
             client.println("HTTP/1.1 404 Not Found\nConnection: close\n");

@@ -46,4 +46,8 @@ void serveCameraSysInfo(EthernetClient &client);
 void serveCameraThresholdTemp(EthernetClient &client);
 void serveCameraThresholdHumid(EthernetClient &client);
 
+// --- Admin page (hidden — no nav link) ---
+void serveAdminPage(EthernetClient &client);
+void handleAdminDelete(EthernetClient &client, const char *filename);
+
 #endif

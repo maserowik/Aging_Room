@@ -4,6 +4,76 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.18] — 2026-04-27
+
+### Added
+- **Hidden admin page** at `/admin` — SD card file manager accessible by URL only, no navigation link on any page
+  - Lists all files on the SD card with human-readable sizes (B / KB / MB)
+  - Download button per file — reuses existing `/archive` endpoint
+  - Delete button per file with browser `confirm()` dialog
+  - Auto-redirects back to admin page after successful delete
+  - Dark theme to visually distinguish from normal dashboard pages
+  - Shows current timestamp in subtitle
+- **`/admin/delete?file=FILENAME` endpoint** — deletes named file from SD card
+  - Active data files (`temp.csv`, `humid.csv`, `SK_T.csv`, `SK_H.csv`, `CA_T.csv`, `CA_H.csv`) are blocked from deletion with a 403 response
+  - Returns 404 if file does not exist
+  - Returns 200 with auto-refresh meta tag on success
+- **`serveAdminPage()` and `handleAdminDelete()`** added to `storage.cpp` and declared in `storage.h`
+- **Admin routes** added to `Aging_Room.ino` router — `GET /admin/delete?file=` matched before `GET /admin` to prevent prefix collision
+
+### Notes
+- All admin HTML strings use `F()` macro — zero additional RAM usage at runtime
+- Peak stack usage during admin page serve: ~70 bytes (released on function return)
+- Admin page is protected by the same Basic Auth as all other endpoints
+
+---
+
+## [v1.17] — 2026-04-27
+
+### Added
+- **Skit Room dashboard** at `/skit` — full interactive dashboard for the Skit Room RS485 node
+  - Temperature and humidity charts with 1/3/5/7 day range selector
+  - Live sensor status bar showing temp (°C/°F) and humidity (% RH) with OK/LOW/HIGH/ERR states
+  - System Status panel showing RAM, uptime, SD status, Last Receive timestamp, NTP sync
+  - Threshold Adjustment panel with Up/Down buttons for temp and humid thresholds
+  - Archive Data tab with date range picker for CSV download
+  - Offline detection banner with auto-reconnect
+- **Camera Room dashboard** at `/camera` — identical feature set to Skit Room dashboard
+- **`serveRoomPage()`** — consolidated private function in `storage.cpp` that generates the sub-room dashboard HTML, parameterized by room name, URL base, file prefix, chart colors, thresholds, and active nav state. Both `serveSkitPage()` and `serveCameraPage()` are thin wrappers around this function
+- **Skit Room API endpoints:**
+  - `GET /skit/status` — `TEMP:value|state,HUMID:value|state`
+  - `GET /skit/sysinfo` — RAM, uptime, SD, last receive, NTP sync
+  - `GET /skit/threshold/temp` — current Skit Room temp threshold
+  - `GET /skit/threshold/humid` — current Skit Room humid threshold
+  - `POST /skit/threshold/temp?v=XX.X` — update and persist Skit Room temp threshold to EEPROM
+  - `POST /skit/threshold/humid?v=XX.X` — update and persist Skit Room humid threshold to EEPROM
+  - `GET /skit/temp.csv` — Skit Room temperature data (last 7 days, stitched from daily files)
+  - `GET /skit/humid.csv` — Skit Room humidity data (last 7 days, stitched from daily files)
+- **Camera Room API endpoints** — identical set under `/camera/` prefix
+- **Navigation bar on all pages** — Aging Room, Skit Room, Camera Room buttons on every dashboard; active room highlighted darker
+- **Skit Room Nano sketch** (`Skit_Room/Skit_Room.ino`) — Arduino Nano RS485 transmitter
+  - Reads DHT22 on pin 4 every 6 minutes
+  - Transmits `SKIT:21.5,45.2\n` packet over SoftwareSerial RS485
+  - Sends `SKIT:ERR,ERR\n` on sensor failure
+  - Debug output on hardware Serial at 115200 baud
+- **Camera Room Nano sketch** (`Camera_Room/Camera_Room.ino`) — identical to Skit Room sketch with `CAM:` prefix
+- **RS485 receive parsing** in `sensors.cpp` (`readRS485()`) — parses incoming `SKIT:` and `CAM:` packets from Serial1, extracts temp and humid floats, updates `tSkit`, `hSkit`, `tCam`, `hCam` globals, updates `lastSkitReceive` / `lastCamReceive` timestamps
+- **EEPROM persistence** for Skit Room temp/humid thresholds and Camera Room temp/humid thresholds — all survive power outages
+- **Daily file logging** for Skit Room (`YYMMDDST.csv`, `YYMMDDSH.csv`) and Camera Room (`YYMMDDCT.csv`, `YYMMDDCH.csv`) in `appendCsvData()`
+- **180-day purge** extended to cover Skit and Camera daily files in `purgeOldLogs()`
+
+### Changed
+- **`serveFile()`** extended to support virtual filenames `SK_T.csv`, `SK_H.csv`, `CA_T.csv`, `CA_H.csv` — stitches the last 7 days of Skit/Camera daily files the same way the Aging Room virtual CSVs work
+- **Navigation on root page** updated to include Skit Room and Camera Room buttons
+- **`storage.h`** updated with all new function declarations
+
+### Notes
+- **Temporary wiring:** Skit Room sensor is currently wired directly to Mega pin 19 (Serial1 RX) bypassing RS485 hardware while MAX485 modules are on order. Data is receiving correctly. No firmware changes required when modules arrive — just swap the wiring
+- **RS485 module clarification:** Must use MAX485 TTL module (~$1–2). RS232-to-RS485 converters are NOT compatible with Arduino — they use ±12V RS232 levels which will damage Arduino pins. RS232-to-RS485 converters are for PC/PLC use only
+- **Transmit-only nodes:** Because Skit and Camera Nanos only ever transmit, a module with DE hardwired HIGH will work on the Nano side. The Mega receive side needs proper RE control or a module with RE hardwired LOW
+
+---
+
 ## [v1.16] — 2026-04-09
 
 ### Added
@@ -19,239 +89,149 @@ All notable changes to this project are documented in this file.
 ## [v1.15] — 2026-04-09
 
 ### Added
-- **Midnight grid lines** — Both Temperature and Humidity charts now draw a bold dark vertical grid line (`rgba(0,0,0,0.6)`, 2px) at each midnight boundary when viewing multi-day ranges, making day transitions visually distinct from regular hourly grid lines (`rgba(0,0,0,0.1)`, 1px)
-- **Dynamic x-axis label format** — Tick labels on both charts now switch format based on the selected range: single-day view uses `h:mm a` (time only); multi-day views use `MMM d, h:mm a` (date + time), so the axis is never ambiguous regardless of zoom level
+- **Midnight grid lines** — Both Temperature and Humidity charts now draw a bold dark vertical grid line at each midnight boundary on multi-day views
+- **Dynamic x-axis label format** — Tick labels switch format based on selected range: single-day = time only; multi-day = date + time
 
 ### Changed
-- **Range dropdown defaults** — Both `tempRange` and `humidRange` selects now have explicit `value=` attributes on every `<option>` tag, ensuring `parseInt()` always reads the correct integer regardless of browser behavior
-- **SD read buffer increased** — `buf[64]` → `buf[128]` in `serveFile()` and the general file-serving path, halving the number of SD read/write cycles per response and reducing the risk of the watchdog timer triggering during large file transfers
-- **`appendCsvData()` watchdog coverage** — `wdt_reset()` added after each SD file close (`tf.close()` and `hf.close()`) inside `appendCsvData()`, providing additional watchdog coverage at the end of each write cycle in addition to the `wdt_disable()/wdt_enable()` wrapper already present in `loop()`
+- **Range dropdown defaults** — Explicit `value=` attributes on every `<option>` tag
+- **SD read buffer increased** — `buf[64]` → `buf[128]` in `serveFile()`
+- **`appendCsvData()` watchdog coverage** — `wdt_reset()` added after each SD file close
 
 ---
 
 ## [v1.14] — 2026-04-05
 
 ### Added
-- **`wdt_disable()/wdt_enable()` around `appendCsvData()`** — SD card writes are now fully bracketed with watchdog disable/re-arm in `loop()`, preventing false watchdog reboots caused by slow SD cards during the 5-minute logging cycle
-- **Additional `wdt_reset()` checkpoints in `serveRootPage()`** — Ten watchdog checkpoint calls distributed throughout the large HTML generation function, preventing false reboots when serving the full dashboard page to a browser
+- **`wdt_disable()/wdt_enable()` around `appendCsvData()`** — SD card writes fully bracketed with watchdog disable/re-arm
+- **Additional `wdt_reset()` checkpoints in `serveRootPage()`** — Ten checkpoint calls distributed throughout HTML generation
 
 ---
 
 ## [v1.13] — 2026-04-02
 
 ### Added
-- **Offline detection banner** — A yellow "SYSTEM OFFLINE" banner appears at the top of the dashboard if the Arduino stops responding. Automatically dismisses when the connection is restored
-- **Auto-reconnect** — `handleDisconnect()` and `checkReconnect()` retry the connection every 4 seconds after a failure, resuming polls automatically when the device comes back online
-- **`safeFetch()` wrapper** — All dashboard fetch calls now go through `safeFetch()`, which catches network errors, triggers the offline banner, and returns `null` safely instead of throwing unhandled exceptions
-- **Staggered poll timers** — Dashboard intervals offset to prevent simultaneous requests: `updateCharts` every 307s, `pollStatus` every 29s, `pollSysInfo` every 31s, `pollThreshold` every 37s, `pollEvents` every 53s
-- **`bootUp()` async init sequence** — Page load now awaits each poll in sequence (`updateCharts` → `pollStatus` → `pollSysInfo` → `pollThreshold` → `pollEvents`) before arming the repeating timers, preventing race conditions on first load. Range dropdown event listeners are also attached inside `bootUp()` before any fetches begin
-- **Empty data guard** — `updateCharts()` returns early if `tempData.labels.length === 0`, preventing a blank chart from destroying a previously-rendered chart when the device is briefly unreachable
-- **`EVENTS.txt` missing guard** — `serveFile()` now returns an empty `200 OK` instead of `404` when `EVENTS.txt` does not exist yet, preventing the Watchdog Alerts panel from showing an error on a fresh install
+- **Offline detection banner** — Yellow "SYSTEM OFFLINE" banner with auto-reconnect every 4 seconds
+- **`safeFetch()` wrapper** — All fetch calls go through safeFetch for consistent error handling
+- **Staggered poll timers** — `updateCharts` 307s, `pollStatus` 29s, `pollSysInfo` 31s, `pollThreshold` 37s, `pollEvents` 53s
+- **`bootUp()` async init sequence** — Sequential await on page load before arming repeating timers
+- **`EVENTS.txt` missing guard** — Returns empty 200 OK instead of 404 on fresh install
 
 ### Changed
-- **Authentication restored to full inline check** — `Aging_Room.ino` now reads HTTP headers line-by-line, captures the `Authorization:` header into `authHeader`, and calls `checkAuth(authHeader)` before routing any request. Previous version had auth accidentally removed
-- **All poll functions skip when offline** — `pollStatus()`, `pollSysInfo()`, `pollThreshold()`, `pollEvents()`, `updateCharts()`, and `downloadDateRange()` all check `isOffline` at entry and return immediately if the device is unreachable
+- **Authentication restored** — Full inline auth check with Authorization header capture
+- **All poll functions skip when offline**
 
 ---
 
 ## [v1.12] — 2026-03-29
 
 ### Added
-- **Hardware Watchdog Timer** — 8-second watchdog armed via `wdt_enable(WDTO_8S)` in `setup()`. If the main loop stalls for any reason (network hang, SD deadlock, infinite loop), the Arduino automatically reboots
-- **Watchdog Event Logging** — On every boot, once NTP syncs successfully, a timestamped entry is written to `EVENTS.txt` on the SD card, creating a permanent audit trail of all watchdog-triggered reboots
-- **Watchdog Alerts Panel** — Web dashboard shows a "Recent Watchdog Alerts" panel below System Status, displaying the 5 most recent entries from `EVENTS.txt`, polling every 60 seconds automatically
-- **Clear Alerts button** — Calls `/clear-events` to delete `EVENTS.txt` and reset the log
-- **Safe SD Eject** — "Prepare SD for Removal / Halt" button in System Status panel calls `/eject`, unmounts the SD card safely, displays `SD UNMOUNTED / SAFE TO UNPLUG` on the LCD, and halts the system in a safe loop until power is removed
-- **Archive date range picker** — Archive tab redesigned from single-date to From/To date range. `downloadDateRange()` fetches all matching daily files across the selected range and combines them into a single merged CSV download with progress reporting
-- **`/events` endpoint** — Serves `EVENTS.txt` from SD card as plain text
-- **`/clear-events` endpoint** — Deletes `EVENTS.txt` from SD card
-- **`/eject` endpoint** — Safely unmounts SD, updates LCD, halts system in watchdog-pet loop
-- **ERR blink animation** — ERR state sensor dots and labels visually pulse via CSS `@keyframes errorBlink`
+- **Hardware Watchdog Timer** — 8-second watchdog via `wdt_enable(WDTO_8S)`
+- **Watchdog Event Logging** — Timestamped entries in `EVENTS.txt` on every boot
+- **Watchdog Alerts Panel** — Dashboard shows 5 most recent reboot events
+- **Clear Alerts button** — Calls `/clear-events`
+- **Safe SD Eject** — `/eject` endpoint unmounts SD and halts safely
+- **Archive date range picker** — From/To range with combined CSV download
+- **`/events`, `/clear-events`, `/eject` endpoints**
+- **ERR blink animation** — CSS `@keyframes errorBlink` on ERR state indicators
 
 ### Changed
-- **Sensor identity colors** — Changed to a colorblind-friendly palette: A=`#0072B2` (blue), B=`#E69F00` (yellow/amber), C=`#CC79A7` (pink), D=`#56B4E9` (light blue). Consistent across status bar, chart lines, and chart legend
-- **Archive tab** — Single calendar date picker replaced with From/To date range selector with progress feedback
-- **Boot LCD hostname scroll** — Extended from 5 seconds to 10 seconds
-- **NTP sync** — Watchdog is disarmed before `requestNtpTime()` and re-armed immediately after to prevent false reboots during the 3-second NTP timeout window
-- **`wdt_reset()` coverage** — Called in: main `loop()` top, client connection inner loop, `/archive` file streaming, `serveFile()` data streaming, SD init failure loop, and all blocking sections of `handleButtonPress()`
-- **Chart time axis** — Added `chartjs-adapter-date-fns` CDN for proper timestamp-based x-axis rendering
-- **Threshold adjustment range** — `MIN_THRESHOLD` changed from 37 to -40, `MAX_THRESHOLD` changed from 47 to 80 in `config.h`
-
-### Fixed
-- Watchdog false reboot during button adjustment — all multi-second blocking loops in `handleButtonPress()` now call `wdt_reset()`
-- Watchdog false reboot during SD file streaming — large file reads now pet the watchdog inline
-- Watchdog false reboot during SD init failure — infinite LED blink loop now calls `wdt_reset()`
+- **Sensor identity colors** — Colorblind-friendly palette: A=`#0072B2`, B=`#E69F00`, C=`#CC79A7`, D=`#56B4E9`
+- **Threshold adjustment range** — `MIN_THRESHOLD` → -40, `MAX_THRESHOLD` → 80
 
 ---
 
 ## [v1.11] — 2026-03-25
 
 ### Added
-- **Time-Aligned Logging** — Sensor readings logged on strict 5-minute clock boundaries (e.g., 12:00, 12:05)
-- **180-Day Rolling Retention** — Data stored in daily files: `YYMMDD_T.csv` (temperature) and `YYMMDD_H.csv` (humidity)
-- **Midnight Janitor** — Automated cleanup runs at 00:00 daily, deleting files exactly 180 days old
-- **Dynamic Chart Stitching** — Web server combines the 7 most recent daily files into a single data stream for the dashboard
-- **Archive Data tab** — Calendar picker UI for downloading specific historical 24-hour CSV files
-- **`/cleanup` endpoint** — Hidden endpoint to delete legacy `temp.csv` and `humid.csv` from the SD card
-- **Sensor status bar** — Shows live temperature in °C and °F per sensor with colored dot: green (OK), yellow (LOW/HIGH), red blinking (ERR)
-- **`/status` endpoint** — Returns label-prefixed sensor data: `A:21.3|OK,B:20.9|LOW,...`
-- **`/sysinfo` endpoint** — Returns free RAM, uptime, SD status, last CSV write time, last NTP sync time
-- **System Status panel** — RAM color-coded green/yellow/red, uptime, SD status, last write, last NTP sync. Polls every 30 seconds
-- **`serveSystemInfo()`** — New C++ function in `storage.cpp`
-- **Chart zoom and pan** — Scroll wheel zooms x-axis, click-drag pans, pinch for touch via `chartjs-plugin-zoom` and `hammerjs`
-- **Reset Zoom button** — On both Temperature and Humidity chart tabs
-- **Hover tooltip** — Shows all sensor values at the nearest time point (`mode: index`, `intersect: false`)
-- **Legend click toggle** — Clicking a legend item hides/shows that dataset
-- **Larger legend items** — `boxWidth: 24`, `padding: 16`, font size 13
-- **Y-axis labels** — "Celsius (°C)" on temperature chart, "Humidity (%)" on humidity chart
-- **X-axis formatting** — Timestamps rotated 45°, max 24 ticks to prevent crowding
-
-### Changed
-- `serveStatus()` updated from plain `OK/ERR` to label-prefixed `LABEL:TEMP|STATE` format
-- `updateStatusBar()` keyed by sensor label not array index to prevent corruption when legend items are toggled
-- `sysPanel` div placed correctly outside `<script>` tag in HTML
-
-### Fixed
-- `extern LiquidCrystal_I2C lcd` moved to file scope in `storage.cpp`
-- DST month index: `epochToDateTime()` returns 0-indexed month; fixed by passing `month + 1` to `isDST()` in `tryNtpSync()`
+- **Time-Aligned Logging** — 5-minute clock boundary logging
+- **180-Day Rolling Retention** — Daily files with midnight janitor
+- **Dynamic Chart Stitching** — Last 7 days combined for dashboard
+- **`/cleanup`, `/status`, `/sysinfo` endpoints**
+- **System Status panel**, **sensor status bar**, **chart zoom/pan**
 
 ---
 
 ## [v1.10] — 2026-03-22
 
 ### Fixed
-- DST still reporting EST instead of EDT despite v1.5 algorithm fix
-- Root cause: `epochToDateTime()` returns 0-indexed month (0=January, 2=March) but `isDST()` expects 1-indexed month (3=March)
-- Fixed by passing `month + 1` to `isDST()` in `tryNtpSync()` in `network.cpp`
-- System now correctly reports `DST Active: Yes (EDT)` and applies UTC-4 offset
+- DST month index bug — `epochToDateTime()` returns 0-indexed month; fixed by passing `month + 1` to `isDST()`
 
 ---
 
 ## [v1.9] — 2026-03-22
 
-### Fixed
-- `extern LiquidCrystal_I2C lcd` moved from inside `initSDCard()` function body to file scope at top of `storage.cpp`
-
 ### Added
-- Sensor status bar above chart tabs showing colored dot and OK/ERR label for each sensor (A, B, C, D)
-- Chart legend dots turn red when a sensor is in ERR state, return to original color when OK
-- `/status` endpoint returns comma-separated OK/ERR state for all four sensors
-- `serveStatus()` function added to `storage.cpp` and `storage.h`
-- `/status` endpoint added to request handler in `Aging_Room.ino`
-- Status bar and legend colors poll `/status` every 30 seconds for live updates
+- Sensor status bar, `/status` endpoint, NTP fallback to `pool.ntp.org`
 
-### Changed
-- Boot sequence standby delay reduced from 10 seconds to 3 seconds
-- NTP fallback to `pool.ntp.org` added — `network.cpp` updated with `tryNtpSync()` helper
+### Fixed
+- `extern LiquidCrystal_I2C lcd` moved to file scope in `storage.cpp`
 
 ---
 
 ## [v1.8] — 2026-03-21
 
 ### Fixed
-- Chart downsampling was hardcoded to every 12th row regardless of selected time range
-- Downsampling now scales dynamically: 1 day = every reading, 3 days = every 6th, 5/7 days = every 12th
+- Chart downsampling now scales dynamically by range (1d=1x, 3d=6x, 5/7d=12x)
 
 ---
 
 ## [v1.7] — 2026-03-21
 
 ### Added
-- `/threshold` endpoint returns current threshold value as plain text
-- `pollThreshold()` polls every 30 seconds, updates chart threshold lines without page reload
-- `serveThreshold()` added to `storage.cpp` and `storage.h`
-
-### Fixed
-- Chart margin corrected from hardcoded `3.0` to `5.0` to match `THRESHOLD_MARGIN` in `config.h`
-- `threshold` JavaScript variable changed from `const` to `let` to allow live updates
+- `/threshold` endpoint, `pollThreshold()` live dashboard updates
 
 ---
 
 ## [v1.6] — 2026-03-21
 
 ### Added
-- NTP fallback to public pool (`pool.ntp.org` / 216.239.35.0) if internal server `192.168.80.8` times out
-- `tryNtpSync()` helper function handles a single NTP server attempt, returns true/false
-- Serial Monitor reports which server responded or timeout on both
+- NTP fallback to `pool.ntp.org` / `216.239.35.0`
 
 ---
 
 ## [v1.5] — 2026-03-20
 
 ### Fixed
-- DST detection broken — system was reporting EST instead of EDT
-- Replaced `isDST()` back-calculation with `nthWeekdayOfMonth()` helper using Tomohiko Sakamoto's algorithm
-- DST check now uses UTC hour before applying timezone offset
-- `isDST()` signature updated to accept `hour` parameter for correct 2:00 AM transition handling
-
-### Changed
-- `network.h` updated to reflect new `isDST(int year, int month, int day, int hour)` signature
-- `nthWeekdayOfMonth()` prototype added to `network.h`
+- DST detection — replaced back-calculation with `nthWeekdayOfMonth()` using Tomohiko Sakamoto's algorithm
 
 ---
 
 ## [v1.4] — 2026-03-19
 
 ### Fixed
-- Sensor retry delays reduced from 500ms to 100ms in `readSensors()`
+- Sensor retry delays reduced from 500ms to 100ms
 
 ---
 
 ## [v1.3] — 2026-03-19
 
 ### Fixed
-- Temperature threshold showing as NaN or 0 on boot when EEPROM has never been written
-- `isnan()` check added to `initSensors()` so NaN values are caught and reset to default
-- EEPROM now written immediately on first boot if no valid threshold is found
-- Threshold adjustment loop now correctly uses `MIN_THRESHOLD` and `MAX_THRESHOLD` constants
+- Temperature threshold NaN on first boot — added `isnan()` guard in `initSensors()`
 
 ### Changed
-- Default temperature threshold changed to **42°C**
-- Threshold adjustment range changed to **37°C – 47°C** (42°C ±5°C)
-- Alert margin changed to **±5°C** (previously ±3°C)
+- Default threshold → 42°C, adjustment range → -40°C to 80°C, alert margin → ±5°C
 
 ### Refactored
-- Project split from single `.ino` file into multi-file architecture
+- Project split from single `.ino` into multi-file architecture
 
 ---
 
 ## [v1.2] — 2026-02-21
 
 ### Fixed
-- Resolved HTTP 413 errors caused by request buffer being too small
-- Fixed SHA256 authentication salt+password hashing order
-
-### Changed
-- Request buffer size increased to 1024 bytes
-- Authentication now uses salted SHA256: `SHA256(SALT + PASSWORD)`
+- HTTP 413 errors from small request buffer
+- SHA256 salt+password hashing order
 
 ---
 
 ## [v1.1] — 2026-02-04
 
 ### Added
-- Salted SHA256 password hashing to replace plain SHA256
-- `AUTH_SALT` constant in `config.h`
-- Comprehensive memory architecture documentation in README
-
-### Changed
-- Authentication credentials moved fully to `config.h` Flash constants
+- Salted SHA256 password hashing, `AUTH_SALT` constant
 
 ---
 
 ## [v1.0] — 2026-01-25
 
 ### Added
-- Four-sensor DHT22 temperature and humidity monitoring
-- 20×4 I2C LCD display with rotating temperature and humidity views
-- Boot sequence with LED test and LCD pixel test
-- Web dashboard with interactive Chart.js charts (1, 3, 5, 7 day views)
-- CSV data logging to SD card every 5 minutes
-- NTP time synchronization with automatic Eastern Time DST adjustment
-- Basic SHA256 web authentication
-- IP-based connection rate limiting (8 global, 3 per IP)
-- EEPROM persistence for temperature threshold
-- Physical button interface for threshold adjustment
-- LED status indicators (solid green, slow red blink, fast red blink)
-- HTTP 503 response when connection limits are reached
-- 5-second request timeout to prevent slowloris attacks
+- Four-sensor DHT22 monitoring, LCD display, web dashboard, CSV logging, NTP, SHA256 auth, connection rate limiting, EEPROM threshold persistence, physical button interface, LED status indicators

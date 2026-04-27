@@ -1,24 +1,27 @@
 # Seegrid Aging Room Environmental Monitoring System
 
-An Arduino-based temperature and humidity monitoring system for industrial aging room environments. Reads four DHT22 sensors simultaneously, displays live readings on an LCD, logs data to an SD card, and serves an interactive web dashboard with real-time alerts.
+An Arduino Mega-based multi-room temperature and humidity monitoring system for industrial aging room environments. Reads four DHT22 sensors on the Aging Room, receives wireless RS485 sensor data from Skit Room and Camera Room Nano nodes, logs all data to an SD card, and serves interactive web dashboards per room with real-time alerts.
 
 ---
 
 ## Table of Contents
 
 1. [How It Works](#how-it-works)
-2. [Requirements](#requirements)
-3. [File Overview](#file-overview)
-4. [Installation](#installation)
-5. [Setting Your Authentication Password](#setting-your-authentication-password)
-6. [Memory Architecture and Data Persistence](#memory-architecture-and-data-persistence)
-7. [Usage](#usage)
-8. [Adjusting the Temperature Threshold](#adjusting-the-temperature-threshold)
-9. [Security Features](#security-features)
-10. [Data Logging](#data-logging)
-11. [Configuration Constants](#configuration-constants)
-12. [Troubleshooting](#troubleshooting)
-13. [Version History](#version-history)
+2. [System Architecture](#system-architecture)
+3. [RS485 Network](#rs485-network)
+4. [Requirements](#requirements)
+5. [File Overview](#file-overview)
+6. [Installation](#installation)
+7. [Setting Your Authentication Password](#setting-your-authentication-password)
+8. [Memory Architecture and Data Persistence](#memory-architecture-and-data-persistence)
+9. [Web Interface URL Reference](#web-interface-url-reference)
+10. [Usage](#usage)
+11. [Adjusting the Temperature Threshold](#adjusting-the-temperature-threshold)
+12. [Security Features](#security-features)
+13. [Data Logging](#data-logging)
+14. [Configuration Constants](#configuration-constants)
+15. [Troubleshooting](#troubleshooting)
+16. [Version History](#version-history)
 
 ---
 
@@ -27,13 +30,99 @@ An Arduino-based temperature and humidity monitoring system for industrial aging
 Once running, the system enters a continuous monitoring loop that:
 
 - **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates through sensor zones automatically.
+- **Receives RS485 serial data** from Skit Room and Camera Room Arduino Nano nodes every 6 minutes. Each Nano reads a DHT22 sensor and transmits a packet (`SKIT:21.5,45.2\n` or `CAM:21.5,45.2\n`) over RS485. The Mega parses and stores the values.
 - **Controls the LED indicators** based on sensor status — solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
-- **Logs sensor data to SD card** every 5 minutes on strict 5-minute clock boundaries, writing timestamped rows to daily files (`YYMMDD_T.csv` and `YYMMDD_H.csv`). A midnight janitor automatically deletes files older than 180 days to prevent the SD card from filling up. Data survives power outages and can be downloaded directly from the web interface.
-- **Serves a web dashboard** with interactive Chart.js charts showing temperature and humidity trends over 1, 3, 5, or 7 days. Charts support scroll-wheel zoom, click-drag pan, and pinch-to-zoom. Bold vertical grid lines mark each midnight boundary on multi-day views. A sensor status bar shows live temperature in °C and °F per sensor with color-coded threshold state indicators. A System Status panel shows RAM, uptime, SD status, last write time, and last NTP sync. A Watchdog Alerts panel logs crash-recovery reboots. An offline detection banner appears automatically if the Arduino stops responding and dismisses when the connection is restored. All endpoints are protected by HTTP Basic Auth using salted SHA256 password hashing.
-- **Syncs time via NTP** at startup and every 24 hours thereafter. The system first contacts the internal NTP server `192.168.80.8` and falls back to the public NTP pool `pool.ntp.org` if unavailable. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
+- **Logs sensor data to SD card** every 5 minutes on strict 5-minute clock boundaries, writing timestamped rows to daily files. A midnight janitor automatically deletes files older than 180 days. Data survives power outages and can be downloaded directly from the web interface.
+- **Serves a web dashboard per room** — Aging Room at `/`, Skit Room at `/skit`, Camera Room at `/camera` — each with interactive Chart.js charts, live sensor status bars, system status panels, and threshold adjustment controls.
+- **Provides a hidden admin page** at `/admin` for SD card file management — listing all files with sizes, downloading individual files, and deleting files with safety guards on active data files.
+- **Syncs time via NTP** at startup and twice daily (midnight and noon). The system first contacts the internal NTP server `192.168.80.8` and falls back to the public NTP pool `pool.ntp.org` if unavailable. DST transitions occur correctly at 2:00 AM on the 2nd Sunday of March (EDT) and 1st Sunday of November (EST).
 - **Runs a hardware watchdog** armed at 8 seconds. If the system stalls for any reason — network hang, SD deadlock, infinite loop — the Arduino reboots automatically. Each reboot is timestamped and logged to `EVENTS.txt` on the SD card.
 - **Tracks network connections** per IP address. A maximum of 8 simultaneous global connections and 3 per IP are enforced; idle connections are released after 5 minutes.
-- **Persists the temperature threshold** to EEPROM so user-configured values survive power outages. Authentication credentials are stored in Flash and never modified at runtime.
+- **Persists temperature thresholds** to EEPROM — one each for Aging Room, Skit Room temp, Skit Room humidity, Camera Room temp, and Camera Room humidity — so all user-configured values survive power outages.
+
+---
+
+## System Architecture
+
+```
+                    ┌─────────────────────────────┐
+                    │     Arduino Mega 2560        │
+                    │                              │
+                    │  • 4× DHT22 sensors (A–D)   │
+                    │  • Ethernet W5100/W5500      │
+                    │  • SD Card (logging)         │
+                    │  • LCD 20×4 I2C              │
+                    │  • Serial1 (pin 19) ←── RS485 bus  │
+                    └──────────────┬───────────────┘
+                                   │ RS485 Bus (A/B twisted pair)
+                    ┌──────────────┴───────────────┐
+                    │                              │
+          ┌─────────┴──────┐            ┌──────────┴──────┐
+          │  Arduino Nano  │            │  Arduino Nano   │
+          │  Skit Room     │            │  Camera Room    │
+          │  • 1× DHT22    │            │  • 1× DHT22     │
+          │  • MAX485 TX   │            │  • MAX485 TX    │
+          │  Tx every 6min │            │  Tx every 6min  │
+          └────────────────┘            └─────────────────┘
+```
+
+---
+
+## RS485 Network
+
+### Overview
+
+The Skit Room and Camera Room each use an **Arduino Nano** with a **MAX485 TTL-to-RS485 module** to transmit sensor data to the Mega every 6 minutes. The Mega listens on `Serial1` (hardware UART, pin 19 RX) and parses incoming packets.
+
+### Packet Format
+
+| Room        | Packet Format          | Example              |
+|-------------|------------------------|----------------------|
+| Skit Room   | `SKIT:temp,humid\n`    | `SKIT:21.5,45.2\n`   |
+| Camera Room | `CAM:temp,humid\n`     | `CAM:20.3,48.4\n`    |
+
+- Units are raw floats — no `C` or `%` suffix in the packet (formatting is applied by the Mega on display/storage)
+- On sensor failure the Nano sends `SKIT:ERR,ERR\n` so the Mega knows the sensor failed vs. a lost packet
+
+### RS485 Module Selection
+
+> **Important:** You must use a **MAX485 TTL module** — NOT an RS232-to-RS485 converter.
+
+| Module Type | Correct for Arduino? | Notes |
+|-------------|---------------------|-------|
+| **MAX485 TTL breakout** | ✅ Yes | 5V logic, DI/DE/RE/RO pins, ~$1–2 each |
+| RS232 to RS485 converter | ❌ No | Uses ±12V RS232 levels — will damage Arduino pins |
+| USB to RS485 adapter | ❌ No | For PC use only |
+
+Search Amazon for: **"MAX485 module Arduino"** — look for the small green board with DI, DE, RE, RO, VCC, GND, A, B labeled.
+
+### DE/RE Pin Wiring
+
+The MAX485 chip uses two direction control pins:
+
+| Pin | Name | Function |
+|-----|------|----------|
+| DI | Driver Input | Data to transmit — connect to Arduino TX |
+| DE | Driver Enable | HIGH = transmit mode enabled |
+| RE | Receiver Enable | LOW = receive mode enabled |
+| RO | Receiver Output | Received data — connect to Arduino RX |
+
+Since DE and RE are always set opposite each other, **tie DE and RE together to a single Arduino digital pin**:
+- Pin HIGH → transmit mode
+- Pin LOW → receive mode
+
+### Current Wiring Status (Temporary)
+
+While proper MAX485 modules are on order, the Skit Room sensor is wired **directly to pin 19 (Serial1 RX)** on the Mega as a temporary bypass. Data is coming through correctly. The Camera Room is not yet connected.
+
+Once MAX485 modules arrive:
+1. Wire Nano TX → MAX485 DI, Nano DE/RE pin → MAX485 DE+RE tied together, MAX485 A/B → bus
+2. Wire Mega Serial1 RX (pin 19) → MAX485 RO, Mega DE/RE pin → MAX485 DE+RE, same A/B bus
+3. No firmware changes required — the code already handles DE/RE switching
+
+### Transmit-Only Nodes (Skit/Camera Nanos)
+
+Because the Skit and Camera Nanos **only ever transmit** and never need to receive, the DE/RE direction control is less critical on the transmitter side. A module with DE hardwired HIGH will work fine on the Nano transmit side. The Mega receive side needs RE permanently LOW or proper DE/RE control.
 
 ---
 
@@ -43,12 +132,15 @@ Once running, the system enters a continuous monitoring loop that:
 
 - Arduino Mega 2560 (or compatible)
 - Ethernet Shield W5100 or W5500
-- 4× DHT22 temperature/humidity sensors
+- 4× DHT22 temperature/humidity sensors (Aging Room)
+- 2× Arduino Nano (Skit Room, Camera Room)
+- 3× MAX485 TTL-to-RS485 modules (1 per Nano TX, 1 on Mega RX)
 - 20×4 I2C LCD display (I2C address `0x27`)
 - SD card module
 - Red and green LEDs
 - Push button
 - MicroSD card formatted FAT32
+- RS485 twisted pair cable between rooms
 
 ### Software
 
@@ -63,45 +155,64 @@ Ethernet (built-in)
 SD (built-in)
 Crypto by Rhys Weatherley
 arduino-base64 by Densaugeo
+SoftwareSerial (built-in, for Nano RS485 sketches)
 ```
 
-### Pin Configuration
+### Pin Configuration — Mega
 
-| Component       | Pin | Notes        |
-|-----------------|-----|--------------|
-| DHT22 Sensor A  | 40  | Digital      |
-| DHT22 Sensor B  | 41  | Digital      |
-| DHT22 Sensor C  | 30  | Digital      |
-| DHT22 Sensor D  | 31  | Digital      |
-| Green LED       | 47  | Digital      |
-| Red LED         | 46  | Digital      |
-| Ethernet CS     | 10  | SPI          |
-| Button          | 50  | INPUT_PULLUP |
-| SD Card CS      | 4   | SPI          |
-| LCD             | I2C | SDA/SCL      |
+| Component            | Pin | Notes        |
+|----------------------|-----|--------------| 
+| DHT22 Sensor A       | 40  | Digital      |
+| DHT22 Sensor B       | 41  | Digital      |
+| DHT22 Sensor C       | 30  | Digital      |
+| DHT22 Sensor D       | 31  | Digital      |
+| Green LED            | 47  | Digital      |
+| Red LED              | 46  | Digital      |
+| Ethernet CS          | 10  | SPI          |
+| Button               | 50  | INPUT_PULLUP |
+| SD Card CS           | 4   | SPI          |
+| LCD                  | I2C | SDA/SCL      |
+| RS485 RX (Serial1)   | 19  | Hardware UART |
+| RS485 DE/RE          | TBD | Digital      |
+
+### Pin Configuration — Nano (Skit Room / Camera Room)
+
+| Component     | Pin | Notes                  |
+|---------------|-----|------------------------|
+| DHT22 Data    | 4   | Digital                |
+| MAX485 DI     | 7   | SoftwareSerial TX      |
+| MAX485 RO     | 8   | SoftwareSerial RX      |
+| MAX485 DE+RE  | TBD | Digital (tied together)|
 
 ---
 
 ## File Overview
 
+### Mega (Main Controller)
+
 | File              | Purpose |
-|-------------------|---------|
-| `Aging_Room.ino`  | Main program — `setup()` and `loop()` |
+|-------------------|---------| 
+| `Aging_Room.ino`  | Main program — `setup()`, `loop()`, HTTP router |
 | `config.h`        | All configuration constants and includes |
 | `auth.h`          | Authentication function declarations |
 | `auth.cpp`        | Salted SHA256 password validation logic |
 | `network.h`       | Network and NTP declarations |
 | `network.cpp`     | Connection tracking, NTP, DST, and time functions |
 | `sensors.h`       | Sensor and LED declarations |
-| `sensors.cpp`     | DHT22 reading, LED control, and button handling |
+| `sensors.cpp`     | DHT22 reading, RS485 parsing, LED control, button |
 | `display.h`       | LCD display declarations |
 | `display.cpp`     | LCD initialization and display updates |
 | `storage.h`       | SD card and web serving declarations |
-| `storage.cpp`     | CSV logging and HTML generation |
+| `storage.cpp`     | CSV logging and all HTML/endpoint generation |
 | `README.md`       | This file |
 | `CHANGELOG.md`    | Version history and change log |
 
-> **Note:** Authentication credentials (`AUTH_SALT` and `AUTH_PASSWORD_SHA256`) are defined in `config.h` and compiled into Flash memory. You must set these before uploading. They cannot be changed at runtime.
+### Skit Room / Camera Room (Nano Nodes)
+
+| File              | Purpose |
+|-------------------|---------|
+| `Skit_Room/Skit_Room.ino`     | Nano sketch — reads DHT22, transmits RS485 every 6 min |
+| `Camera_Room/Camera_Room.ino` | Nano sketch — reads DHT22, transmits RS485 every 6 min |
 
 ---
 
@@ -132,12 +243,19 @@ IPAddress subnet(255, 255, 255, 0);
 
 See [Setting Your Authentication Password](#setting-your-authentication-password) below. **This step is required before deployment.**
 
-### Step 5 — Upload to Arduino
+### Step 5 — Upload to Arduino Mega
 
 1. Open `Aging_Room.ino` in Arduino IDE.
 2. Select **Tools → Board → Arduino Mega 2560**.
 3. Select the correct COM port under **Tools → Port**.
 4. Click **Upload**.
+
+### Step 6 — Upload Nano sketches
+
+1. Open `Skit_Room/Skit_Room.ino`.
+2. Select **Tools → Board → Arduino Nano**.
+3. Upload to the Skit Room Nano.
+4. Repeat with `Camera_Room/Camera_Room.ino` for the Camera Room Nano.
 
 ---
 
@@ -145,7 +263,7 @@ See [Setting Your Authentication Password](#setting-your-authentication-password
 
 The system uses **salted SHA256 hashing** for web authentication. You must generate a hash before deploying — the placeholder in `config.h` will not work.
 
-**Default username:** `Seegrid`
+**Default username:** `Seegrid`  
 **Default password:** Not set — you must configure one.
 
 ### Step 1 — Choose your salt and password
@@ -180,27 +298,6 @@ Save `config.h` and re-upload the sketch to your Arduino.
 
 ---
 
-### Example Walkthrough
-
-```
-Step 1: Choose values
-  Salt:     MyCompanySalt2026
-  Password: SecurePass123!
-
-Step 2: Combine (no spaces)
-  Combined: MyCompanySalt2026SecurePass123!
-
-Step 3: Generate hash at website
-  Input:  MyCompanySalt2026SecurePass123!
-  Output: 7a8f9b2c3d4e5f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4
-
-Step 4: Put in config.h
-  #define AUTH_SALT            "MyCompanySalt2026"
-  #define AUTH_PASSWORD_SHA256 "7a8f9b2c3d4e5f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4"
-```
-
----
-
 ### Password Security Guidelines
 
 **DO:**
@@ -217,127 +314,119 @@ Step 4: Put in config.h
 
 ---
 
-### Regenerating Your Password
-
-If you need to change the password after deployment:
-
-1. Keep the same salt or choose a new one.
-2. Combine the new salt and new password.
-3. Generate a new SHA256 hash at the website.
-4. Update both values in `config.h`.
-5. Re-upload the sketch to the Arduino.
-
----
-
 ## Memory Architecture and Data Persistence
 
-The Arduino Mega uses four distinct memory types. Understanding where data lives explains how the system behaves after a power outage.
-
-### Flash Memory — Where Credentials Are Stored
-
-Flash stores the compiled program code and all `#define` constants, including your authentication salt and password hash.
+### Flash Memory — Program + Credentials
 
 | Property | Value |
 |----------|-------|
 | Size | 256 KB |
 | Survives power loss | **Yes** |
 | Write method | Arduino IDE upload only |
-| Runtime modification | Not possible |
 
-Because credentials are in Flash, they cannot be changed by a running bug, network attack, or power event. Changing them requires uploading a new sketch via USB.
-
----
-
-### EEPROM — Where the Temperature Threshold Is Stored
-
-EEPROM stores only the user-configured temperature threshold (4 bytes). It is not used for credentials because it is too easily readable and writable at runtime.
+### EEPROM — Threshold Values
 
 | Property | Value |
 |----------|-------|
 | Size | 4 KB |
-| Current usage | 4 bytes (0.1%) |
+| Current usage | 5 thresholds × 4 bytes = 20 bytes |
 | Survives power loss | **Yes** |
-| Write method | Button interface at runtime |
 
-```cpp
-// sensors.cpp — Reading threshold on startup
-void initSensors() {
-  EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
-  if (isnan(tempThreshold) || tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
-    tempThreshold = DEFAULT_TEMP_THRESHOLD;
-    EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
-  }
-}
-
-// sensors.cpp — Saving threshold when user adjusts via button
-void handleButtonPress() {
-  EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
-}
-```
-
----
+EEPROM stores: Aging Room temp threshold, Skit Room temp threshold, Skit Room humid threshold, Camera Room temp threshold, Camera Room humid threshold.
 
 ### RAM — Volatile Working Memory
-
-RAM holds all runtime variables (sensor readings, connection state, HTTP buffers) and is lost immediately on power loss. The system re-initializes everything from Flash and EEPROM at each boot.
 
 | Property | Value |
 |----------|-------|
 | Size | 8 KB |
 | Survives power loss | **No** |
+| Typical free RAM | ~2.0 KB at runtime |
 
----
+All HTML strings use `F()` macro to store in Flash rather than RAM. RAM is monitored live in the System Status panel on each dashboard.
 
 ### SD Card — Historical Sensor Data
 
-The SD card stores daily temperature and humidity files. Data accumulates continuously and survives power outages. The last write before a power loss may be incomplete but the rest of the file is unaffected.
-
 | Property | Value |
 |----------|-------|
-| Size | User-supplied (typically 2–32 GB) |
 | Survives power loss | **Yes** |
-| Estimated growth | ~14 KB/day · ~5 MB/year |
-
----
+| Estimated growth | ~14 KB/day per room · ~15 MB/year total |
+| Retention | 180 days rolling |
 
 ### Memory Persistence Summary
 
-| Memory Type | Size   | Survives Power Loss | Credentials Stored  |
-|-------------|--------|---------------------|---------------------|
-| **Flash**   | 256 KB | **Yes**             | **Yes ← auth here** |
-| **EEPROM**  | 4 KB   | **Yes**             | No                  |
-| **RAM**     | 8 KB   | **No**              | No                  |
-| **SD Card** | User   | **Yes**             | No                  |
+| Memory Type | Size   | Survives Power Loss | What's Stored |
+|-------------|--------|---------------------|---------------|
+| **Flash**   | 256 KB | **Yes**             | Program + auth credentials |
+| **EEPROM**  | 4 KB   | **Yes**             | 5 threshold values |
+| **RAM**     | 8 KB   | **No**              | Runtime variables |
+| **SD Card** | User   | **Yes**             | All historical CSV data |
 
 ---
 
-### Power Outage Recovery Sequence
+## Web Interface URL Reference
+
+All endpoints require HTTP Basic Auth. Replace `192.168.55.151` with your device's actual IP.
+
+### Full HTML Pages
+
+| URL | Description |
+|-----|-------------|
+| `http://192.168.55.151/` | Aging Room main dashboard |
+| `http://192.168.55.151/skit` | Skit Room dashboard |
+| `http://192.168.55.151/camera` | Camera Room dashboard |
+| `http://192.168.55.151/admin` | **Hidden** admin SD file manager — no nav link |
+
+### Data / API Endpoints
+
+| URL | Returns | Notes |
+|-----|---------|-------|
+| `http://192.168.55.151/status` | `A:21.3\|OK\|45.1,B:20.9\|LOW\|44.8,...` | Aging Room sensor states |
+| `http://192.168.55.151/sysinfo` | `RAM:2048,UPTIME:0d 5h 58m,SD:OK,...` | System info |
+| `http://192.168.55.151/threshold` | `21.0` | Aging Room temp threshold |
+| `http://192.168.55.151/events` | Plain text | Watchdog reboot log |
+| `http://192.168.55.151/temp.csv` | CSV | Aging Room temperature (last 7 days) |
+| `http://192.168.55.151/humid.csv` | CSV | Aging Room humidity (last 7 days) |
+| `http://192.168.55.151/skit/status` | `TEMP:20.7\|OK,HUMID:50.2\|OK` | Skit Room sensor state |
+| `http://192.168.55.151/skit/sysinfo` | `RAM:...,LASTRECEIVE:...` | Skit Room system info |
+| `http://192.168.55.151/skit/threshold/temp` | `22.0` | Skit Room temp threshold |
+| `http://192.168.55.151/skit/threshold/humid` | `50.0` | Skit Room humid threshold |
+| `http://192.168.55.151/skit/temp.csv` | CSV | Skit Room temperature (last 7 days) |
+| `http://192.168.55.151/skit/humid.csv` | CSV | Skit Room humidity (last 7 days) |
+| `http://192.168.55.151/camera/status` | `TEMP:20.3\|OK,HUMID:48.4\|OK` | Camera Room sensor state |
+| `http://192.168.55.151/camera/sysinfo` | `RAM:...,LASTRECEIVE:...` | Camera Room system info |
+| `http://192.168.55.151/camera/threshold/temp` | `22.0` | Camera Room temp threshold |
+| `http://192.168.55.151/camera/threshold/humid` | `50.0` | Camera Room humid threshold |
+| `http://192.168.55.151/camera/temp.csv` | CSV | Camera Room temperature (last 7 days) |
+| `http://192.168.55.151/camera/humid.csv` | CSV | Camera Room humidity (last 7 days) |
+| `http://192.168.55.151/archive?file=FILENAME` | File download | Download any file by name from SD |
+
+### Action Endpoints
+
+| URL | Action | Notes |
+|-----|--------|-------|
+| `http://192.168.55.151/clear-events` | Deletes `EVENTS.txt` | Clears watchdog alert log |
+| `http://192.168.55.151/cleanup` | Deletes `temp.csv` and `humid.csv` | Legacy file cleanup |
+| `http://192.168.55.151/eject` | Safely unmounts SD, halts system | Must reboot to resume logging |
+| `http://192.168.55.151/admin/delete?file=FILENAME` | Deletes named file from SD | Active data files are blocked |
+
+### Hostname Access
+
+If DNS is configured on your network:
 
 ```
-[0s]    Power on
-[1s]    Flash loads program code and credentials
-[2s]    EEPROM reads temperature threshold
-[3s]    Display shows boot sequence
-[5s]    Sensors initialize
-[10s]   Network attempts DHCP
-[15s]   Device IP address displayed on LCD
-[20s]   NTP time sync begins (primary then fallback)
-[25s]   System fully operational
-[30s]   First sensor reading logged to SD card
+http://agingroom00.mach.hq.seegrid.lan/
+http://agingroom00.mach.hq.seegrid.lan/skit
+http://agingroom00.mach.hq.seegrid.lan/camera
+http://agingroom00.mach.hq.seegrid.lan/admin
 ```
 
-No user action is required after a power outage. Credentials, threshold settings, and all historical data are automatically available.
+### Static IP Fallback
 
----
+If DHCP fails, the device falls back to:
 
-### Memory Health Indicators
-
-| Memory       | Healthy   | Warning    | Critical |
-|--------------|-----------|------------|----------|
-| Flash        | < 80%     | 80–95%     | > 95%    |
-| EEPROM       | < 50%     | 50–90%     | > 90%    |
-| RAM          | < 70%     | 70–85%     | > 85%    |
-| SD Card free | > 100 MB  | 10–100 MB  | < 10 MB  |
+```
+http://192.168.48.20/
+```
 
 ---
 
@@ -356,16 +445,19 @@ After boot, the device displays its IP address on the LCD for 10 seconds and on 
 
 ### Web Dashboard Features
 
-**Sensor Status Bar**
-Shows live sensor readings for each sensor with a colored dot indicator. Updates every 29 seconds automatically. The values displayed switch based on the active tab — temperature (°C and °F with threshold state) on the Temperature tab, and humidity (% RH) on the Humidity tab. On a tab switch the bar re-renders immediately using the last received data without waiting for the next poll.
+**Navigation Bar**  
+Every page has buttons to switch between Aging Room, Skit Room, and Camera Room dashboards. The Admin page has no nav link — access it directly at `/admin`.
+
+**Sensor Status Bar**  
+Shows live sensor readings with color-coded status. Updates every 29 seconds. Displays temperature on the Temperature tab, humidity on the Humidity tab.
 
 | Dot Color | Meaning |
-|-----------|---------|
-| Identity color (blue/yellow/pink/light blue) | Sensor within threshold range |
+|-----------|---------| 
+| Identity color | Sensor within threshold range |
 | Yellow | Sensor outside threshold — shows ↓ LOW or ↑ HIGH |
-| Red (blinking) | Sensor error — shows ERR |
+| Red (blinking) | Sensor error |
 
-**Sensor Identity Colors**
+**Sensor Identity Colors (Aging Room)**
 
 | Sensor | Color | Hex |
 |--------|-------|-----|
@@ -375,36 +467,20 @@ Shows live sensor readings for each sensor with a colored dot indicator. Updates
 | D | Light Blue | `#56B4E9` |
 
 **Chart Tabs**
-- **Temperature tab** — All four sensor readings with Threshold, High Threshold, and Low Threshold lines
-- **Humidity tab** — Humidity trends across all four sensors
-- **Archive Data tab** — From/To date range picker to download a combined CSV for any period up to 6 months
+- Temperature — sensor readings with threshold lines
+- Humidity — humidity trends
+- Archive Data — date range picker to download combined CSV up to 6 months
 
-**Chart Controls**
-- Range selector — 1, 3, 5, or 7 day views. Changing the selector immediately redraws the chart without requiring a button click
-- Export PNG — Downloads a chart image
-- Update Now — Forces an immediate chart refresh
-- Reset Zoom — Returns chart to full time range
-- Scroll wheel — Zooms in on x-axis
-- Click and drag — Pans the zoomed view
-- Pinch (touch) — Zooms on mobile
+**System Status Panel**  
+Shows RAM, uptime, SD status, last write/receive time, NTP sync time.
 
-**Chart Display**
-- Single-day view — x-axis tick labels show time only (e.g., `2:00 PM`)
-- Multi-day views — x-axis tick labels show date and time (e.g., `Apr 5, 2:00 PM`)
-- Midnight boundaries — a bold dark vertical line marks the start of each new day on multi-day views, making day transitions clearly visible
+**Threshold Adjustment (Skit/Camera pages)**  
+Up/Down buttons adjust temp and humid thresholds live. Values are saved to EEPROM immediately.
 
-**System Status Panel** (below charts)
-Shows free RAM (color-coded green/yellow/red), uptime, SD card status, last CSV write time, and last NTP sync time. Polls every 31 seconds. Also contains the "Prepare SD for Removal / Halt" button.
-
-**Watchdog Alerts Panel** (below System Status)
-Shows the 5 most recent entries from `EVENTS.txt`, each timestamped with the date and time of the reboot. Polls every 53 seconds. Contains a "Clear Alerts" button to reset the log.
-
-**Offline Detection Banner**
-A yellow "SYSTEM OFFLINE" banner appears at the top of the page if the Arduino stops responding. The dashboard retries every 4 seconds and automatically dismisses the banner when the device comes back online. All polls pause while offline and resume automatically on reconnect.
+**Admin Page (`/admin`)**  
+Dark-themed hidden page listing all SD card files with sizes. Each file has a Download button (reuses `/archive` endpoint) and a Delete button with confirmation dialog. Active data files (`temp.csv`, `humid.csv`, `SK_T.csv`, etc.) are protected from deletion. Auto-refreshes after a delete.
 
 ### Safe SD Card Removal
-
-To safely remove the SD card without corrupting data:
 
 1. Click **"Prepare SD for Removal / Halt"** in the System Status panel.
 2. Confirm the dialog.
@@ -412,51 +488,23 @@ To safely remove the SD card without corrupting data:
 4. Remove the SD card.
 5. **You must reboot the Arduino to resume logging.**
 
-### Chart Resolution by Time Range
-
-| Range   | Data Points Plotted | Resolution     |
-|---------|---------------------|----------------|
-| 1 day   | Every reading       | Every 5 min    |
-| 3 days  | Every 6th reading   | Every 30 min   |
-| 5 days  | Every 12th reading  | Every 60 min   |
-| 7 days  | Every 12th reading  | Every 60 min   |
-
 ---
 
 ## Adjusting the Temperature Threshold
 
-The threshold is adjusted using the physical button on the device.
+### Aging Room — Physical Button
 
 1. Press and hold the button for **5 seconds**.
-2. Both LEDs alternate at 250 ms to confirm you are entering adjustment mode.
+2. Both LEDs alternate at 250 ms to confirm adjustment mode.
 3. Green LED flashes 10 times to confirm entry.
-4. **Keep holding** — the threshold increases by 1°C every 2 seconds, cycling between −40°C and 80°C. The current value is shown on the LCD.
-5. **Release the button** when the desired threshold is displayed to save.
-6. Red LED flashes 10 times to confirm the save.
-7. Both LEDs flash 20 times as a final confirmation.
-8. The display shows the old and new threshold values for 10 seconds.
-9. The web dashboard threshold lines update automatically within 37 seconds.
+4. Keep holding — threshold increases by 1°C every 2 seconds, cycling −40°C to 80°C.
+5. Release the button at the desired value to save.
+6. Red LED flashes 10 times, then both flash 20 times to confirm save.
+7. The web dashboard threshold lines update automatically within 37 seconds.
 
-The new threshold is saved to EEPROM and persists through power outages.
+### Skit Room / Camera Room — Web Interface
 
-### LED Behavior During Adjustment
-
-| Phase                   | Green LED          | Red LED            | Duration      |
-|-------------------------|--------------------|--------------------|---------------|
-| Holding button (0–5 s)  | Alternates 250 ms  | Alternates 250 ms  | 5 seconds     |
-| Entry confirmation      | Flashes 10×        | OFF                | ~5 seconds    |
-| Adjusting (holding)     | Blinks 250 ms      | OFF                | Until release |
-| Save confirmation       | OFF                | Flashes 10×        | ~5 seconds    |
-| Final confirmation      | Flashes 20×        | Flashes 20×        | ~10 seconds   |
-| Return to normal        | Status dependent   | Status dependent   | Ongoing       |
-
-### LED Status During Normal Operation
-
-| Pattern                  | Meaning                                  |
-|--------------------------|------------------------------------------|
-| Solid green              | All sensors within threshold ±5°C        |
-| Slow red blink (500 ms)  | One or more sensors outside threshold    |
-| Fast red blink (250 ms)  | Sensor error or read failure             |
+Use the Up/Down arrow buttons in the **Threshold Adjustment** panel on the `/skit` or `/camera` dashboard page. Changes take effect immediately and are saved to EEPROM.
 
 ---
 
@@ -464,59 +512,35 @@ The new threshold is saved to EEPROM and persists through power outages.
 
 ### Salted SHA256 Authentication
 
-Passwords are never stored in plaintext. The system stores only `SHA256(SALT + PASSWORD)` in Flash.
-
-All web endpoints require authentication: the root dashboard (`/`), temperature CSV (`/temp.csv`), humidity CSV (`/humid.csv`), threshold endpoint (`/threshold`), status endpoint (`/status`), sysinfo endpoint (`/sysinfo`), events log (`/events`), and archive downloads (`/archive`).
+All web endpoints require authentication. Passwords are stored as `SHA256(SALT + PASSWORD)` in Flash — never in plaintext, never modifiable at runtime.
 
 ### IP-Based Connection Limiting
 
-- **Global limit:** 8 simultaneous connections across all clients
-- **Per-IP limit:** 3 simultaneous connections from any single IP
+- **Global limit:** 8 simultaneous connections
+- **Per-IP limit:** 3 simultaneous connections
 - **Idle timeout:** 5 minutes
 - **Cleanup interval:** Every 30 seconds
 
 ### Hardware Watchdog
 
-The 8-second hardware watchdog provides automatic crash recovery. If any part of the firmware stalls — network hang, SD deadlock, or unexpected loop — the Arduino reboots automatically without human intervention. All reboots are logged to `EVENTS.txt` with a timestamp and are visible in the Watchdog Alerts panel on the dashboard.
-
-The watchdog is disarmed before SD write operations (`appendCsvData()`) and NTP syncs (`requestNtpTime()`), and immediately re-armed after each, preventing false reboots from slow SD cards or delayed NTP responses. Additional `wdt_reset()` checkpoints are distributed throughout `serveRootPage()` and all blocking loops to ensure the watchdog is consistently serviced during long operations.
-
----
-
-### Additional Security Measures
-
-- **Request size limiting** — 1024-byte maximum prevents buffer overflow attacks
-- **Request timeout** — 5-second per-request timeout prevents slowloris attacks
-- **HTTP Basic Auth** — Industry-standard authentication protocol
-- **No default credentials** — System requires password setup before first use
-- **Local network only** — Designed for internal facility use, not internet exposure
-
----
-
-### Security Best Practices for Deployment
-
-1. **Change the default salt** — Never use the example salt in production.
-2. **Use strong passwords** — Minimum 12 characters, mixed case, numbers, and symbols.
-3. **Unique salt per installation** — Each deployed unit should have a different salt.
-4. **Network isolation** — Deploy on an isolated VLAN or private network segment.
-5. **Physical security** — Secure the Arduino in a locked enclosure.
-6. **Backup credentials** — Store your salt and password in a secure password manager.
-7. **Review access logs** — Monitor Serial Monitor output for unauthorized login attempts.
+8-second watchdog provides automatic crash recovery. All reboots logged to `EVENTS.txt` with timestamps.
 
 ---
 
 ## Data Logging
 
-- **Interval:** Every 5 minutes, strictly time-aligned to clock boundaries (xx:00, xx:05, etc.)
-- **Files:** Daily files — `YYMMDD_T.csv` (temperature) and `YYMMDD_H.csv` (humidity)
-- **Retention:** 180 days — automated file deletion occurs at midnight
-- **Watchdog log:** `EVENTS.txt` — one timestamped entry per reboot
-- **Format:** Date, Time, Sensor A, Sensor B, Sensor C, Sensor D
-- **Time sync:** NTP updates every 24 hours — primary `192.168.80.8`, fallback `pool.ntp.org`
-- **Timezone:** Eastern Time with automatic DST adjustment
-- **DST Start:** 2nd Sunday of March at 2:00 AM (EDT, UTC-4)
-- **DST End:** 1st Sunday of November at 2:00 AM (EST, UTC-5)
-- **Persistence:** All data survives power outages
+| Property | Value |
+|----------|-------|
+| Interval | Every 5 minutes, time-aligned to clock boundaries |
+| Aging Room files | `YYMMDD_T.csv`, `YYMMDD_H.csv` |
+| Skit Room files | `YYMMDDST.csv`, `YYMMDDSH.csv` |
+| Camera Room files | `YYMMDDCT.csv`, `YYMMDDCH.csv` |
+| Watchdog log | `EVENTS.txt` |
+| Retention | 180 days rolling — midnight janitor deletes old files |
+| Time sync | NTP at boot, midnight, and noon |
+| NTP primary | `192.168.80.8` |
+| NTP fallback | `pool.ntp.org` |
+| Timezone | Eastern Time with automatic DST |
 
 ---
 
@@ -542,93 +566,47 @@ Edit `config.h` to change these parameters:
 ## Troubleshooting
 
 ### Sensor reading errors / LCD shows "ERR"
-
 - Check DHT22 sensor wiring and confirm 5V power is reaching the sensors.
-- Verify the data wire from each M12 connector is landed on the correct Arduino pin (A:40, B:41, C:30, D:31).
-- Confirm GND is connected for all sensors.
+- Verify the data wire from each M12 connector is landed on the correct Arduino pin.
 - For M12 wiring: Pin 2 = Sensor A or C data, Pin 4 = Sensor B or D data, Pin 1 = VCC, Pin 3 = GND.
-- The web dashboard sensor status bar will show a blinking red ERR dot for any failed sensors.
 
-### Temperature threshold shows NaN or 0 on boot
+### Skit Room / Camera Room shows no data or dashes
+- Check the RS485 wiring between the Nano and Mega.
+- Confirm the Nano sketch is uploaded and running — check its Serial Monitor for `Sent: SKIT:XX.X,XX.X`.
+- If using temporary direct wiring (no RS485 modules yet), confirm pin 19 on the Mega is connected to the Nano TX.
+- The `Last Receive` timestamp in the Skit/Camera System Status panel shows when data was last received.
 
-- Occurs when EEPROM has never been written. System automatically resets to 42°C and writes to EEPROM on first boot.
-- If it persists, use the button adjustment sequence to manually set and save a threshold value.
-
-### System keeps rebooting
-
-- Check the Watchdog Alerts panel on the dashboard for timestamped reboot entries.
-- Common causes: SD card too slow or full, network instability, power supply brownout.
-- Confirm SD card is formatted FAT32 and has adequate free space.
+### RS485 modules not working — direction issues
+- Confirm you are using a **MAX485 TTL module**, NOT an RS232-to-RS485 converter.
+- RS232-to-RS485 converters use ±12V logic levels and will not work with Arduino — they are for PC/PLC use only.
+- Ensure DE and RE pins are tied together and connected to a digital output pin on the Arduino.
+- DE/RE HIGH = transmit mode, DE/RE LOW = receive mode.
 
 ### Dashboard shows "SYSTEM OFFLINE" banner
+- The Arduino is unreachable. Dashboard retries automatically every 4 seconds.
+- Check Ethernet cable and power.
+- If device rebooted, wait ~30 seconds for boot to complete.
 
-- The Arduino is unreachable. The dashboard retries automatically every 4 seconds.
-- Check that the Ethernet cable is connected and the device has power.
-- If the device rebooted due to the watchdog, wait for it to finish its boot sequence (~30 seconds) and the banner will dismiss automatically.
-
-### Chart not rendering / blank chart area
-
-- Open browser developer tools (F12) and check the console for JavaScript errors.
-- Confirm the CDN scripts are loading — the browser needs network access to `cdn.jsdelivr.net` for Chart.js, hammerjs, and the zoom plugin.
-- Try clicking "Update Now" to force a data refresh.
-- If the device has been running for less than 5 minutes, no CSV data will exist yet. The chart will appear once the first log entry is written at the next 5-minute boundary.
-
-### Range dropdown does not update the chart
-
-- The dropdown change listener is registered inside `bootUp()`, which runs 2 seconds after the page loads. If you change the dropdown immediately on page open, click "Update Now" once — after that the listener is active and all changes auto-update immediately.
+### Chart not rendering
+- Confirm browser has internet access to `cdn.jsdelivr.net` for Chart.js.
+- Click "Update Now" to force a data refresh.
+- If device has been running less than 5 minutes, no CSV data exists yet.
 
 ### DHCP failed / cannot reach web interface
-
-- Device falls back to static IP `192.168.48.20` — try that address first.
-- Confirm Ethernet cable is connected and network has a DHCP server.
-- Confirm firewall is not blocking port 80.
-
-### Authentication fails after password setup
-
-- Confirm `AUTH_SALT` in `config.h` exactly matches the salt used to generate the hash.
-- Verify sketch was uploaded after saving `config.h`.
-- Check the Serial Monitor for authentication error messages.
-
-### Time not syncing / wrong time displayed
-
-- System tries `192.168.80.8` first, then falls back to `pool.ntp.org`.
-- Check Serial Monitor — shows which server responded or reports timeout on both.
-- If both servers time out, the device will continue running but timestamps will be incorrect until the next NTP retry 24 hours later.
-- Verify port 123 (UDP) is not blocked by a firewall.
+- Device falls back to static IP `192.168.48.20`.
+- Try hostname: `agingroom00.mach.hq.seegrid.lan`
 
 ### Time is off by one hour
-
 - Confirm you are running v1.10 or later which includes the DST month index fix.
-- Serial Monitor will show `DST Active: Yes (EDT)` or `DST Active: No (EST)`.
+- Serial Monitor shows `DST Active: Yes (EDT)` or `DST Active: No (EST)`.
 
 ### SD card initialization failed
+- Confirm SD card is formatted FAT32.
+- Cards larger than 32GB may need reformatting — Windows defaults to exFAT which is not compatible.
 
-- Confirm SD card is formatted as FAT32.
-- Cards larger than 32GB may need to be reformatted — Windows defaults these to exFAT which is not compatible.
-- Verify card is properly seated and CS pin wiring is correct (pin 4).
-
-### Cannot safely remove SD card
-
-- Use the "Prepare SD for Removal / Halt" button in the System Status panel on the dashboard.
-- Wait for the LCD to show `SD UNMOUNTED / SAFE TO UNPLUG` before removing the card.
-- Do not remove the card while the red LED is blinking — that indicates active SD write.
-
-### CSV data lost after power outage
-
-- Check SD card is properly inserted and formatted FAT32.
-- The last data point written before the outage may be incomplete — all prior records are intact.
-- Daily files are written independently, so only the current day's last entry is at risk.
-
-### Temperature threshold resets after reboot
-
-- The threshold is stored in EEPROM and survives power loss. If it resets, EEPROM may be corrupted (rare).
-- Re-set the threshold via the button to write a fresh value.
-
-### Credentials not working after power outage
-
-- Credentials are stored in Flash memory, which survives power loss indefinitely.
-- Confirm you originally uploaded the sketch with the correct credentials.
-- If suspected corruption, re-upload the sketch with your `config.h` values.
+### Cannot delete a file on the admin page
+- Active data files (`temp.csv`, `humid.csv`, `SK_T.csv`, `SK_H.csv`, `CA_T.csv`, `CA_H.csv`) are protected from deletion on the admin page.
+- Use the `/cleanup` endpoint to delete legacy `temp.csv`/`humid.csv`, or use `/eject` + manual SD removal for full access.
 
 ---
 
