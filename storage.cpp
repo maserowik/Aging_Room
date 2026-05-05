@@ -1093,7 +1093,7 @@ static void serveRoomPage(EthernetClient &client,
   client.println(F("      {label:'High',data:Array(td.labels.length).fill(tempThresh+margin),borderColor:'gray',borderDash:[2,2],pointRadius:0},"));
   client.println(F("      {label:'Low',data:Array(td.labels.length).fill(tempThresh-margin),borderColor:'gray',borderDash:[2,2],pointRadius:0}"));
   client.println(F("    ]},options:{responsive:true,maintainAspectRatio:false,"));
-  client.println(F("    scales:{x:{type:'time',time:{tooltipFormat:'yyyy-MM-dd HH:mm',displayFormats:{hour:fmtT,minute:fmtT,day:'MMM d'}},ticks:{maxRotation:45,minRotation:45,maxTicksLimit:24,font:{size:10}}},"));
+  client.println(F("    scales:{x:{type:'time',time:{tooltipFormat:'yyyy-MM-dd HH:mm',displayFormats:{hour:fmtT,minute:fmtT,day:'MMM d'}},ticks:{maxRotation:45,minRotation:45,maxTicksLimit:24,font:{size:10}},grid:{color:c=>(c.tick&&c.tick.value&&new Date(c.tick.value).getHours()===0&&new Date(c.tick.value).getMinutes()===0)?'rgba(0,0,0,0.6)':'rgba(0,0,0,0.1)',lineWidth:c=>(c.tick&&c.tick.value&&new Date(c.tick.value).getHours()===0&&new Date(c.tick.value).getMinutes()===0)?2:1}},"));
   client.println(F("    y:{title:{display:true,text:'Celsius (°C)',font:{size:13}},ticks:{stepSize:1.0}}},"));
   client.println(F("    interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false},legend:{labels:{boxWidth:24,padding:16,font:{size:13}}},"));
   client.println(F("    zoom:typeof ChartZoom!=='undefined'?{pan:{enabled:true,mode:'x'},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x'}}:{}}}});"));
@@ -1109,7 +1109,7 @@ static void serveRoomPage(EthernetClient &client,
   client.println(F("      {label:'High',data:Array(hd.labels.length).fill(humidThresh+margin),borderColor:'gray',borderDash:[2,2],pointRadius:0},"));
   client.println(F("      {label:'Low',data:Array(hd.labels.length).fill(humidThresh-margin),borderColor:'gray',borderDash:[2,2],pointRadius:0}"));
   client.println(F("    ]},options:{responsive:true,maintainAspectRatio:false,"));
-  client.println(F("    scales:{x:{type:'time',time:{tooltipFormat:'yyyy-MM-dd HH:mm',displayFormats:{hour:fmtH,minute:fmtH,day:'MMM d'}},ticks:{maxRotation:45,minRotation:45,maxTicksLimit:24,font:{size:10}}},"));
+  client.println(F("    scales:{x:{type:'time',time:{tooltipFormat:'yyyy-MM-dd HH:mm',displayFormats:{hour:fmtH,minute:fmtH,day:'MMM d'}},ticks:{maxRotation:45,minRotation:45,maxTicksLimit:24,font:{size:10}},grid:{color:c=>(c.tick&&c.tick.value&&new Date(c.tick.value).getHours()===0&&new Date(c.tick.value).getMinutes()===0)?'rgba(0,0,0,0.6)':'rgba(0,0,0,0.1)',lineWidth:c=>(c.tick&&c.tick.value&&new Date(c.tick.value).getHours()===0&&new Date(c.tick.value).getMinutes()===0)?2:1}},"));
   client.println(F("    y:{title:{display:true,text:'Humidity (%)',font:{size:13}},ticks:{stepSize:1.0}}},"));
   client.println(F("    interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false},legend:{labels:{boxWidth:24,padding:16,font:{size:13}}},"));
   client.println(F("    zoom:typeof ChartZoom!=='undefined'?{pan:{enabled:true,mode:'x'},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x'}}:{}}}});"));

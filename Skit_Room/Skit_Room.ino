@@ -1,5 +1,5 @@
 // ============================================================
-// Skit Room — Arduino Nano RS485 Transmitter
+// Skit Room — Arduino UNO RS485 Transmitter
 // Reads one DHT22 sensor and transmits temp/humidity to Mega
 // Transmit interval: every 6 minutes
 // Packet format: SKIT:21.5,45.2\n
@@ -10,8 +10,9 @@
 
 // --- Pin Definitions ---
 #define DHT_PIN       4     // DHT22 data pin
-#define RS485_TX_PIN  7     // MAX485 DI
+#define RS485_TX_PIN  11    // MAX485 DI
 #define RS485_RX_PIN  8     // MAX485 RO (not used — receive only on Mega)
+#define RS485_DE_PIN  10    // MAX485 DE+RE — HIGH to transmit, LOW to receive
 #define DHTTYPE       DHT22
 
 // --- Timing ---
@@ -25,11 +26,13 @@ SoftwareSerial rs485(RS485_RX_PIN, RS485_TX_PIN);
 unsigned long lastTransmit = 0;
 
 void setup() {
-  Serial.begin(115200);   // Debug only
-  rs485.begin(115200);
+  pinMode(RS485_DE_PIN, OUTPUT);
+  digitalWrite(RS485_DE_PIN, LOW);  // Bus released — receive mode by default
+  Serial.begin(115200);             // Debug only
+  rs485.begin(9600);
   dht.begin();
-  delay(2000);            // Allow DHT22 to stabilize on power-up
-  Serial.println("Skit Room Nano Ready");
+  delay(2000);                      // Allow DHT22 to stabilize on power-up
+  Serial.println("Skit Room UNO Ready");
 }
 
 void loop() {
@@ -46,7 +49,7 @@ void transmitData() {
   float humid = dht.readHumidity();
 
   // Retry once on failed read
-  if (isnan(temp)) { delay(100); temp  = dht.readTemperature(); }
+  if (isnan(temp))  { delay(100); temp  = dht.readTemperature(); }
   if (isnan(humid)) { delay(100); humid = dht.readHumidity(); }
 
   char packet[32];
@@ -63,7 +66,13 @@ void transmitData() {
     snprintf(packet, sizeof(packet), "SKIT:%s,%s\n", tempStr, humidStr);
   }
 
+  // Enable driver — take control of the bus
+  digitalWrite(RS485_DE_PIN, HIGH);
+  delay(1);                         // Brief settling time before transmit
   rs485.print(packet);
+  rs485.flush();                    // Wait for transmission to complete
+  delay(1);                         // Brief settling time after transmit
+  digitalWrite(RS485_DE_PIN, LOW);  // Release the bus
 
   // Debug to Serial Monitor
   Serial.print("Sent: ");

@@ -49,7 +49,7 @@
 #define BUTTON_PIN    50
 
 // Pin Definitions — RS485 (Mega Serial1: RX=19, TX=18, DE+RE tied to GND)
-#define RS485_BAUD    115200
+#define RS485_BAUD    9600
 
 // Timing Constants
 #define BLINK_INTERVAL_NORMAL 500

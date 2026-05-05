@@ -4,13 +4,11 @@
 // Global LCD object
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-// Display state — 0-5 cycles through all three rooms
+// Display state — 0-3 cycles through all three rooms
 // 0 = Aging Room Temperature
 // 1 = Aging Room Humidity
-// 2 = Skit Room Temperature + Humidity
-// 3 = Skit Room Threshold Status
-// 4 = Camera Room Temperature + Humidity
-// 5 = Camera Room Threshold Status
+// 2 = Skit Room Temperature + Humidity + Threshold Status
+// 3 = Camera Room Temperature + Humidity + Threshold Status
 int displayMode = 0;
 unsigned long lastDisplaySwitch = 0;
 
@@ -68,30 +66,41 @@ void bootSequence() {
   lcd.clear();
 }
 
-// Helper — prints a float value or ERR/-- depending on state
-// col/row = cursor position, width = total field width to pad/clear
-static void printSensorVal(float val, int col, int row, const char* unit) {
+// ============================================================
+// printRoomVal — prints a sensor value with blink-on-out-of-range
+// val       : sensor reading (NAN = error)
+// threshold : the threshold for this value type
+// col/row   : LCD cursor position
+// unit      : unit string e.g. "C" or "%"
+// blinkState: current blink state from updateLEDs()
+// ============================================================
+static void printRoomVal(float val, float threshold, int col, int row,
+                         const char* unit, bool blinkState) {
   lcd.setCursor(col, row);
   if (isnan(val)) {
-    lcd.print("ERR  ");
+    lcd.print(blinkState ? "ERR  " : "     ");
+  } else if (abs(val - threshold) > THRESHOLD_MARGIN && blinkState) {
+    lcd.print("     ");
   } else {
-    // Print value with 1 decimal place followed by unit
-    char buf[8];
+    char buf[7];
     dtostrf(val, 4, 1, buf);
     lcd.print(buf);
     lcd.print(unit);
   }
 }
 
-// Helper — prints threshold status: OK, LOW, HIGH, or ERR
-static void printThreshStatus(float val, float threshold, float margin, int col, int row) {
+// ============================================================
+// printRoomStatus — prints OK / LOW / HIGH / ERR (5 chars)
+// Blinks blank when out of range
+// ============================================================
+static void printRoomStatus(float val, float threshold, int col, int row, bool blinkState) {
   lcd.setCursor(col, row);
   if (isnan(val)) {
-    lcd.print("ERR  ");
-  } else if (val < threshold - margin) {
-    lcd.print("LOW  ");
-  } else if (val > threshold + margin) {
-    lcd.print("HIGH ");
+    lcd.print(blinkState ? "ERR  " : "     ");
+  } else if (val < threshold - THRESHOLD_MARGIN) {
+    lcd.print(blinkState ? "     " : "LOW  ");
+  } else if (val > threshold + THRESHOLD_MARGIN) {
+    lcd.print(blinkState ? "     " : "HIGH ");
   } else {
     lcd.print("OK   ");
   }
@@ -101,7 +110,7 @@ void updateDisplay() {
   unsigned long now = millis();
 
   if (now - lastDisplaySwitch >= 10000) {
-    displayMode = (displayMode + 1) % 6;
+    displayMode = (displayMode + 1) % 4;
     lcd.clear();
     lastDisplaySwitch = now;
   }
@@ -114,7 +123,14 @@ void updateDisplay() {
   switch (displayMode) {
 
     // --------------------------------------------------------
-    case 0:  // Aging Room — Temperature
+    // Screen 0 — Aging Room Temperature
+    // Row 0: "Aging Room Temp     "
+    // Row 1: "A:XX.XC  B:XX.XC   "
+    // Row 2: "C:XX.XC  D:XX.XC   "
+    // Row 3: "Thresh: XXC         "
+    // Out-of-range values blink blank. ERR blinks ERR/blank.
+    // --------------------------------------------------------
+    case 0:
       lcd.setCursor(0, 0);
       lcd.print("Aging Room Temp     ");
       lcd.setCursor(0, 1);
@@ -136,7 +152,13 @@ void updateDisplay() {
       break;
 
     // --------------------------------------------------------
-    case 1:  // Aging Room — Humidity
+    // Screen 1 — Aging Room Humidity
+    // Row 0: "Aging Room Humidity "
+    // Row 1: "A:XX.X%  B:XX.X%   "
+    // Row 2: "C:XX.X%  D:XX.X%   "
+    // Row 3: blank
+    // --------------------------------------------------------
+    case 1:
       lcd.setCursor(0, 0);
       lcd.print("Aging Room Humidity ");
       lcd.setCursor(0, 1);
@@ -156,67 +178,67 @@ void updateDisplay() {
       break;
 
     // --------------------------------------------------------
-    case 2:  // Skit Room — Temperature + Humidity
+    // Screen 2 — Skit Room (collapsed)
+    // Row 0: "Skit Room           "
+    // Row 1: "Temp: XX.XC  OK     "   (blinks blank when out of range)
+    // Row 2: "Humid:XX.X%  OK     "   (blinks blank when out of range)
+    // Row 3: "T:XXC   H:XX%       "   (threshold reference)
+    // --------------------------------------------------------
+    case 2:
       lcd.setCursor(0, 0);
       lcd.print("Skit Room           ");
+
+      // Row 1 — Temperature value + status
       lcd.setCursor(0, 1);
       lcd.print("Temp: ");
-      printSensorVal(tSkit, 6, 1, "C  ");
+      printRoomVal(tSkit, skitTempThreshold, 6, 1, "C  ", blinkState);
+      printRoomStatus(tSkit, skitTempThreshold, 13, 1, blinkState);
+
+      // Row 2 — Humidity value + status
       lcd.setCursor(0, 2);
       lcd.print("Humid:");
-      printSensorVal(hSkit, 6, 2, "%  ");
-      lcd.setCursor(0, 3);
-      lcd.print("                    ");
-      break;
+      printRoomVal(hSkit, skitHumidThreshold, 6, 2, "%  ", blinkState);
+      printRoomStatus(hSkit, skitHumidThreshold, 13, 2, blinkState);
 
-    // --------------------------------------------------------
-    case 3:  // Skit Room — Threshold Status
-      lcd.setCursor(0, 0);
-      lcd.print("Skit Threshold      ");
-      lcd.setCursor(0, 1);
+      // Row 3 — Threshold reference (static, no blink needed)
+      lcd.setCursor(0, 3);
       lcd.print("T:");
       lcd.print((int)skitTempThreshold);
-      lcd.print("C St:");
-      printThreshStatus(tSkit, skitTempThreshold, THRESHOLD_MARGIN, 9, 1);
-      lcd.setCursor(0, 2);
-      lcd.print("H:");
+      lcd.print("C  H:");
       lcd.print((int)skitHumidThreshold);
-      lcd.print("% St:");
-      printThreshStatus(hSkit, skitHumidThreshold, THRESHOLD_MARGIN, 9, 2);
-      lcd.setCursor(0, 3);
-      lcd.print("                    ");
+      lcd.print("%        ");
       break;
 
     // --------------------------------------------------------
-    case 4:  // Camera Room — Temperature + Humidity
+    // Screen 3 — Camera Room (collapsed)
+    // Row 0: "Camera Room         "
+    // Row 1: "Temp: XX.XC  OK     "   (blinks blank when out of range)
+    // Row 2: "Humid:XX.X%  OK     "   (blinks blank when out of range)
+    // Row 3: "T:XXC   H:XX%       "   (threshold reference)
+    // --------------------------------------------------------
+    case 3:
       lcd.setCursor(0, 0);
       lcd.print("Camera Room         ");
+
+      // Row 1 — Temperature value + status
       lcd.setCursor(0, 1);
       lcd.print("Temp: ");
-      printSensorVal(tCam, 6, 1, "C  ");
+      printRoomVal(tCam, camTempThreshold, 6, 1, "C  ", blinkState);
+      printRoomStatus(tCam, camTempThreshold, 13, 1, blinkState);
+
+      // Row 2 — Humidity value + status
       lcd.setCursor(0, 2);
       lcd.print("Humid:");
-      printSensorVal(hCam, 6, 2, "%  ");
-      lcd.setCursor(0, 3);
-      lcd.print("                    ");
-      break;
+      printRoomVal(hCam, camHumidThreshold, 6, 2, "%  ", blinkState);
+      printRoomStatus(hCam, camHumidThreshold, 13, 2, blinkState);
 
-    // --------------------------------------------------------
-    case 5:  // Camera Room — Threshold Status
-      lcd.setCursor(0, 0);
-      lcd.print("Camera Threshold    ");
-      lcd.setCursor(0, 1);
+      // Row 3 — Threshold reference (static, no blink needed)
+      lcd.setCursor(0, 3);
       lcd.print("T:");
       lcd.print((int)camTempThreshold);
-      lcd.print("C St:");
-      printThreshStatus(tCam, camTempThreshold, THRESHOLD_MARGIN, 9, 1);
-      lcd.setCursor(0, 2);
-      lcd.print("H:");
+      lcd.print("C  H:");
       lcd.print((int)camHumidThreshold);
-      lcd.print("% St:");
-      printThreshStatus(hCam, camHumidThreshold, THRESHOLD_MARGIN, 9, 2);
-      lcd.setCursor(0, 3);
-      lcd.print("                    ");
+      lcd.print("%        ");
       break;
   }
 }
