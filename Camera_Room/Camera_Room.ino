@@ -32,6 +32,12 @@ void setup() {
   rs485.begin(9600);
   dht.begin();
   delay(2000);                      // Allow DHT22 to stabilize on power-up
+
+  // Stagger transmit offset: Camera fires 3 minutes after Skit
+  // Prevents RS485 bus collisions (Skit=6min, Camera=7min, common multiple=42min)
+  // lastTransmit pre-set so first transmit fires at t=3min, not t=0
+  lastTransmit = millis() - (TRANSMIT_INTERVAL - 180000UL);
+
   Serial.println("Camera Room UNO Ready");
 }
 

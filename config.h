@@ -60,7 +60,7 @@
 
 // RS485 receive timeout — if no packet within this window sensor is marked stale
 // Covers 6-min (Skit) and 7-min (Camera) transmit intervals with margin
-#define RS485_TIMEOUT_MS  600000UL  // 10 minutes
+#define RS485_TIMEOUT_MS  1200000UL
 
 // SD Card Configuration
 #define SD_CHIP_SELECT 4

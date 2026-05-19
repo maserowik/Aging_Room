@@ -317,6 +317,9 @@ void loop() {
           else if (strncmp(httpRequest, "GET /camera ",         12) == 0) serveCameraPage(client);
 
           // --- Admin endpoints (hidden — no nav link) ---
+          else if (strncmp(httpRequest, "GET /admin/delete-all", 21) == 0) {
+            handleAdminDeleteAll(client);
+          }
           else if (strncmp(httpRequest, "GET /admin/delete?file=", 23) == 0) {
             // Extract filename from query string
             char delFile[16];

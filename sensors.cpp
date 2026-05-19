@@ -166,20 +166,47 @@ void readRS485() {
             // Check for ERR packet
             bool isErr = (strcmp(tempBuf, "ERR") == 0);
 
-            if (isSkit) {
-              tSkit = isErr ? NAN : atof(tempBuf);
-              hSkit = isErr ? NAN : atof(humidBuf);
-              lastSkitReceive = millis();
-              Serial.print(F("Skit: "));
-              Serial.print(tSkit); Serial.print(F("C, "));
-              Serial.print(hSkit); Serial.println(F("%"));
+            if (!isErr) {
+              float parsedTemp  = atof(tempBuf);
+              float parsedHumid = atof(humidBuf);
+
+              // Sanity check — reject physically impossible values from corrupt packets
+              if (parsedTemp < 5.0 || parsedTemp > 50.0 ||
+                  parsedHumid < 1.0 || parsedHumid > 99.0) {
+                Serial.print(F("RS485 bad packet rejected: "));
+                Serial.println(rs485Buf);
+                rs485BufLen = 0;
+                continue;
+              }
+
+              if (isSkit) {
+                tSkit = parsedTemp;
+                hSkit = parsedHumid;
+                lastSkitReceive = millis();
+                Serial.print(F("Skit: "));
+                Serial.print(tSkit); Serial.print(F("C, "));
+                Serial.print(hSkit); Serial.println(F("%"));
+              } else {
+                tCam = parsedTemp;
+                hCam = parsedHumid;
+                lastCamReceive = millis();
+                Serial.print(F("Camera: "));
+                Serial.print(tCam); Serial.print(F("C, "));
+                Serial.print(hCam); Serial.println(F("%"));
+              }
             } else {
-              tCam = isErr ? NAN : atof(tempBuf);
-              hCam = isErr ? NAN : atof(humidBuf);
-              lastCamReceive = millis();
-              Serial.print(F("Camera: "));
-              Serial.print(tCam); Serial.print(F("C, "));
-              Serial.print(hCam); Serial.println(F("%"));
+              // ERR packet — mark as NAN, still update receive timestamp
+              if (isSkit) {
+                tSkit = NAN;
+                hSkit = NAN;
+                lastSkitReceive = millis();
+                Serial.println(F("Skit: ERR"));
+              } else {
+                tCam = NAN;
+                hCam = NAN;
+                lastCamReceive = millis();
+                Serial.println(F("Camera: ERR"));
+              }
             }
           }
         }
