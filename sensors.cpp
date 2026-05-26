@@ -32,9 +32,15 @@ bool blinkState = false;
 unsigned long lastBlinkToggle = 0;
 unsigned long lastSensorRead  = 0;
 
-// --- RS485 receive buffer ---
-static char rs485Buf[32];
-static uint8_t rs485BufLen = 0;
+// --- RS485 poll timing ---
+// Mega polls Skit then Camera sequentially
+// Clock-aligned to 5-minute boundaries — matches CSV write schedule
+#define RS485_DE_PIN        34         // Mega MAX485 DE+RE — pin 34
+#define RS485_REPLY_TIMEOUT 2000UL     // Wait up to 2 seconds for a reply
+
+// --- Stale sensor flags --- ensures stale warning prints once only ---
+static bool skitStaleWarned = false;
+static bool camStaleWarned  = false;
 
 // ============================================================
 void initSensors() {
@@ -78,13 +84,17 @@ void initSensors() {
     EEPROM.put(EEPROM_CAM_HUMID_THRESHOLD_ADDR, camHumidThreshold);
   }
 
-  // Start RS485 serial port
+  // RS485 DE pin — start in receive mode
+  digitalWrite(RS485_DE_PIN, LOW);
+  pinMode(RS485_DE_PIN, OUTPUT);
+
+  // Start RS485 hardware serial
   Serial1.begin(RS485_BAUD);
 
-  Serial.print(F("Aging Room threshold: "));  Serial.println(tempThreshold);
-  Serial.print(F("Skit temp threshold: "));   Serial.println(skitTempThreshold);
-  Serial.print(F("Skit humid threshold: "));  Serial.println(skitHumidThreshold);
-  Serial.print(F("Camera temp threshold: ")); Serial.println(camTempThreshold);
+  Serial.print(F("Aging Room threshold: "));   Serial.println(tempThreshold);
+  Serial.print(F("Skit temp threshold: "));    Serial.println(skitTempThreshold);
+  Serial.print(F("Skit humid threshold: "));   Serial.println(skitHumidThreshold);
+  Serial.print(F("Camera temp threshold: "));  Serial.println(camTempThreshold);
   Serial.print(F("Camera humid threshold: ")); Serial.println(camHumidThreshold);
 }
 
@@ -120,121 +130,197 @@ void readSensors() {
     lastSensorRead = now;
   }
 
-  // Mark Skit and Camera sensors stale if no packet received within timeout
+  // Mark Skit sensor stale if no reply within timeout
   if (lastSkitReceive > 0 && (now - lastSkitReceive > RS485_TIMEOUT_MS)) {
+    if (!skitStaleWarned) {
+      Serial.println(F("Skit stale"));
+      skitStaleWarned = true;
+    }
     tSkit = NAN;
     hSkit = NAN;
   }
+
+  // Mark Camera sensor stale if no reply within timeout
   if (lastCamReceive > 0 && (now - lastCamReceive > RS485_TIMEOUT_MS)) {
+    if (!camStaleWarned) {
+      Serial.println(F("Cam stale"));
+      camStaleWarned = true;
+    }
     tCam = NAN;
     hCam = NAN;
   }
 }
 
 // ============================================================
-// readRS485() — call every loop() iteration
-// Reads incoming bytes from Serial1, builds lines terminated by '\n'
-// Parses SKIT:temp,humid and CAM:temp,humid packets
+// parseReply() — internal helper
+// Parses a null-terminated reply line from a UNO
+// Expected formats: SKIT:21.5,45.2  or  CAM:21.5,45.2  or  SKIT:ERR,ERR
+// Updates the appropriate globals directly
 // ============================================================
-void readRS485() {
-  while (Serial1.available()) {
-    char c = Serial1.read();
+static void parseReply(char* buf) {
+  bool isSkit = (strncmp(buf, "SKIT:", 5) == 0);
+  bool isCam  = (strncmp(buf, "CAM:",  4) == 0);
 
-    if (c == '\n') {
-      // Null-terminate and process the completed line
-      rs485Buf[rs485BufLen] = '\0';
+  if (!isSkit && !isCam) {
+    Serial.print(F("RS485 unknown reply: "));
+    Serial.println(buf);
+    return;
+  }
 
-      // Determine room from prefix
-      bool isSkit = (strncmp(rs485Buf, "SKIT:", 5) == 0);
-      bool isCam  = (strncmp(rs485Buf, "CAM:",  4) == 0);
+  const char* data = isSkit ? buf + 5 : buf + 4;
+  const char* comma = strchr(data, ',');
+  if (!comma) return;
 
-      if (isSkit || isCam) {
-        const char* data = isSkit ? rs485Buf + 5 : rs485Buf + 4;
+  char tempBuf[8];
+  char humidBuf[8];
+  uint8_t tLen = comma - data;
+  if (tLen >= sizeof(tempBuf)) return;
 
-        // Find comma separating temp and humid
-        const char* comma = strchr(data, ',');
-        if (comma) {
-          char tempBuf[8];
-          char humidBuf[8];
-          uint8_t tLen = comma - data;
-          if (tLen < sizeof(tempBuf)) {
-            memcpy(tempBuf, data, tLen);
-            tempBuf[tLen] = '\0';
-            strncpy(humidBuf, comma + 1, sizeof(humidBuf) - 1);
-            humidBuf[sizeof(humidBuf) - 1] = '\0';
+  memcpy(tempBuf, data, tLen);
+  tempBuf[tLen] = '\0';
+  strncpy(humidBuf, comma + 1, sizeof(humidBuf) - 1);
+  humidBuf[sizeof(humidBuf) - 1] = '\0';
 
-            // Check for ERR packet
-            bool isErr = (strcmp(tempBuf, "ERR") == 0);
+  bool isErr = (strcmp(tempBuf, "ERR") == 0);
 
-            if (!isErr) {
-              float parsedTemp  = atof(tempBuf);
-              float parsedHumid = atof(humidBuf);
+  if (!isErr) {
+    float parsedTemp  = atof(tempBuf);
+    float parsedHumid = atof(humidBuf);
 
-              // Sanity check — reject physically impossible values from corrupt packets
-              if (parsedTemp < 5.0 || parsedTemp > 50.0 ||
-                  parsedHumid < 1.0 || parsedHumid > 99.0) {
-                Serial.print(F("RS485 bad packet rejected: "));
-                Serial.println(rs485Buf);
-                rs485BufLen = 0;
-                continue;
-              }
+    // Sanity check — reject physically impossible values
+    if (parsedTemp < 5.0 || parsedTemp > 50.0 ||
+        parsedHumid < 1.0 || parsedHumid > 99.0) {
+      Serial.print(F("RS485 bad value: "));
+      Serial.println(buf);
+      return;
+    }
 
-              if (isSkit) {
-                tSkit = parsedTemp;
-                hSkit = parsedHumid;
-                lastSkitReceive = millis();
-                Serial.print(F("Skit: "));
-                Serial.print(tSkit); Serial.print(F("C, "));
-                Serial.print(hSkit); Serial.println(F("%"));
-              } else {
-                tCam = parsedTemp;
-                hCam = parsedHumid;
-                lastCamReceive = millis();
-                Serial.print(F("Camera: "));
-                Serial.print(tCam); Serial.print(F("C, "));
-                Serial.print(hCam); Serial.println(F("%"));
-              }
-            } else {
-              // ERR packet — mark as NAN, still update receive timestamp
-              if (isSkit) {
-                tSkit = NAN;
-                hSkit = NAN;
-                lastSkitReceive = millis();
-                Serial.println(F("Skit: ERR"));
-              } else {
-                tCam = NAN;
-                hCam = NAN;
-                lastCamReceive = millis();
-                Serial.println(F("Camera: ERR"));
-              }
-            }
-          }
-        }
-      }
-
-      // Reset buffer
-      rs485BufLen = 0;
-
-    } else if (c != '\r' && rs485BufLen < sizeof(rs485Buf) - 1) {
-      rs485Buf[rs485BufLen++] = c;
-    } else if (rs485BufLen >= sizeof(rs485Buf) - 1) {
-      // Buffer overflow — discard and reset
-      rs485BufLen = 0;
+    if (isSkit) {
+      tSkit = parsedTemp;
+      hSkit = parsedHumid;
+      lastSkitReceive = millis();
+      skitStaleWarned = false;
+      Serial.print(F("Skit: "));
+      Serial.print(tSkit); Serial.print(F("C, "));
+      Serial.print(hSkit); Serial.println(F("%"));
+    } else {
+      tCam = parsedTemp;
+      hCam = parsedHumid;
+      lastCamReceive = millis();
+      camStaleWarned = false;
+      Serial.print(F("Camera: "));
+      Serial.print(tCam); Serial.print(F("C, "));
+      Serial.print(hCam); Serial.println(F("%"));
+    }
+  } else {
+    // ERR reply — mark NAN but update timestamp so stale watchdog resets
+    if (isSkit) {
+      tSkit = NAN; hSkit = NAN;
+      lastSkitReceive = millis();
+      skitStaleWarned = false;
+      Serial.println(F("Skit: ERR"));
+    } else {
+      tCam = NAN; hCam = NAN;
+      lastCamReceive = millis();
+      camStaleWarned = false;
+      Serial.println(F("Camera: ERR"));
     }
   }
+}
+
+// ============================================================
+// pollNode() — internal helper
+// Sends a poll request to one node and waits for its reply
+// request: "GET:SKIT\n" or "GET:CAM\n"
+// Returns true if a reply was received and parsed
+// ============================================================
+static bool pollNode(const char* request) {
+  // Flush any stale bytes in the receive buffer first
+  while (Serial1.available()) Serial1.read();
+
+  // Transmit the poll request
+  digitalWrite(RS485_DE_PIN, HIGH);
+  delay(1);
+  Serial1.print(request);
+  Serial1.flush();
+  delay(1);
+  digitalWrite(RS485_DE_PIN, LOW);
+
+  // Wait for reply with timeout
+  char replyBuf[32];
+  uint8_t replyLen = 0;
+  unsigned long deadline = millis() + RS485_REPLY_TIMEOUT;
+
+  while (millis() < deadline) {
+    if (Serial1.available()) {
+      char c = Serial1.read();
+      if (c == '\n') {
+        replyBuf[replyLen] = '\0';
+        if (replyLen > 0) {
+          parseReply(replyBuf);
+          return true;
+        }
+      } else if (c != '\r' && replyLen < sizeof(replyBuf) - 1) {
+        replyBuf[replyLen++] = c;
+      }
+    }
+    wdt_reset();  // Keep watchdog happy during wait
+  }
+
+  // Timeout — no reply received
+  Serial.print(F("RS485 no reply: "));
+  Serial.print(request);
+  return false;
+}
+
+// ============================================================
+// readRS485() — called every loop() iteration from Aging_Room.ino
+// On boot: polls immediately for fresh data, then aligns to
+// 5-minute clock boundaries (:00, :05, :10 ... :55)
+// Only one node transmits at a time — bus contention impossible
+// ============================================================
+void readRS485() {
+  extern unsigned long currentEpoch;
+  static unsigned long nextPollEpoch = 0;
+  static bool bootPollDone = false;
+
+  // Wait until NTP time is valid
+  if (currentEpoch < 1000000000UL) return;
+
+  // On first valid NTP time — do immediate boot poll then set schedule
+  if (!bootPollDone) {
+    bootPollDone = true;
+    nextPollEpoch = currentEpoch + (300 - (currentEpoch % 300));
+    wdt_disable();
+    pollNode("GET:SKIT\n");
+    delay(50);
+    pollNode("GET:CAM\n");
+    wdt_enable(WDTO_8S);
+    return;
+  }
+
+  // Not yet time for next scheduled poll
+  if (currentEpoch < nextPollEpoch) return;
+
+  // On schedule — advance to next boundary and poll
+  nextPollEpoch += 300;
+
+  wdt_disable();             // Disable watchdog during poll — up to 4 seconds total
+  pollNode("GET:SKIT\n");
+  delay(50);                 // Brief gap between polls
+  pollNode("GET:CAM\n");
+  wdt_enable(WDTO_8S);       // Re-arm watchdog
 }
 
 // ============================================================
 void updateLEDs() {
   unsigned long now = millis();
 
-  // Error = any sensor NAN across all three rooms
   bool anyError =
     isnan(tA) || isnan(tB) || isnan(tC) || isnan(tD) ||
     isnan(tSkit) || isnan(hSkit) ||
     isnan(tCam)  || isnan(hCam);
 
-  // Out of range = any sensor outside threshold across all three rooms
   bool anyOutOfRange =
     (!isnan(tA) && abs(tA - tempThreshold) > THRESHOLD_MARGIN) ||
     (!isnan(tB) && abs(tB - tempThreshold) > THRESHOLD_MARGIN) ||
@@ -246,9 +332,9 @@ void updateLEDs() {
     (!isnan(hCam)  && abs(hCam  - camHumidThreshold)  > THRESHOLD_MARGIN);
 
   unsigned long blinkInterval;
-  if (anyError)        blinkInterval = BLINK_INTERVAL_FAST;
+  if (anyError)           blinkInterval = BLINK_INTERVAL_FAST;
   else if (anyOutOfRange) blinkInterval = BLINK_INTERVAL_NORMAL;
-  else                 blinkInterval = 0;
+  else                    blinkInterval = 0;
 
   if (blinkInterval > 0 && now - lastBlinkToggle >= blinkInterval) {
     blinkState = !blinkState;

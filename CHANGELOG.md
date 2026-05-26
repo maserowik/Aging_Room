@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [v1.23] — 2026-05-26
+
+### Changed
+- **RS485 architecture changed from push to poll** — UNO nodes no longer transmit on a timer. The Mega now controls the bus entirely, sending `GET:SKIT\n` and `GET:CAM\n` poll requests sequentially. Each UNO listens for its own address and responds once before returning to receive mode. Bus contention is now physically impossible regardless of UNO resets or power events.
+- **Mega MAX485 DE+RE moved from GND to pin 34** — the Mega MAX485 was previously receive-only (DE+RE tied to GND). Pin 34 is now firmware-controlled: LOW at idle (receive), briefly HIGH during poll request transmission, then immediately LOW again.
+- **RS485 poll interval clock-aligned to 5-minute boundaries** — polling fires at :00, :05, :10 ... :55 every hour, matching the CSV write schedule. On boot, an immediate poll fires as soon as NTP time is valid, giving fresh data right away. Subsequent polls follow the clock boundary schedule.
+- **`RS485_POLL_INTERVAL` define removed** — replaced with epoch-based clock alignment logic in `readRS485()`. `lastPollTime` variable also removed.
+- **Skit and Camera UNO sketches rewritten as poll responders** — `loop()` now listens on SoftwareSerial for the Mega poll request and responds with one packet. No timers, no stagger logic, no `randomSeed()`. `rs485.listen()` added to `setup()` to activate SoftwareSerial receive.
+- **`config.h` comment corrected** — RS485 pin comment updated from "DE+RE tied to GND" to "DE+RE on pin 34".
+
+### Fixed
+- **Skit and Camera web page status showing all dashes** — `pollStatus()` JavaScript in `serveRoomPage()` had mismatched closing braces causing the entire script to fail silently. Fixed brace count in the `parts.forEach()` callback.
+
+### Hardware Changes Required
+- **Mega MAX485:** move DE+RE wire from GND to **Mega pin 34**
+- **Both UNO MAX485 boards:** add RO wire from MAX485 RO pin to **UNO pin 8** (previously unconnected)
+
+### Notes
+- The root cause of the intermittent RS485 failure was bus contention: both UNOs transmitting simultaneously after one UNO reset and lost its stagger offset. The poll architecture eliminates this permanently — only the addressed UNO ever transmits, and only when the Mega asks.
+- The Mega DE+RE wire move and the UNO RO wire are both required for the poll architecture to function.
+
+---
+
 ## [v1.22] — 2026-05-19
 
 ### Fixed

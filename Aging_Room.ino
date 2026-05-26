@@ -285,13 +285,35 @@ void loop() {
           else if (strncmp(httpRequest, "POST /skit/threshold/temp", 25) == 0) {
             // Value passed as query string: POST /skit/threshold/temp?v=22.5
             const char* q = strchr(httpRequest + 25, '=');
-            if (q) { extern float skitTempThreshold; skitTempThreshold = atof(q + 1); EEPROM.put(EEPROM_SKIT_TEMP_THRESHOLD_ADDR, skitTempThreshold); }
-            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+            if (q) {
+              extern float skitTempThreshold;
+              float v = atof(q + 1);
+              if (v >= MIN_THRESHOLD && v <= MAX_THRESHOLD) {
+                skitTempThreshold = v;
+                EEPROM.put(EEPROM_SKIT_TEMP_THRESHOLD_ADDR, skitTempThreshold);
+                client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+              } else {
+                client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Value out of range");
+              }
+            } else {
+              client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Missing value");
+            }
           }
           else if (strncmp(httpRequest, "POST /skit/threshold/humid", 26) == 0) {
             const char* q = strchr(httpRequest + 26, '=');
-            if (q) { extern float skitHumidThreshold; skitHumidThreshold = atof(q + 1); EEPROM.put(EEPROM_SKIT_HUMID_THRESHOLD_ADDR, skitHumidThreshold); }
-            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+            if (q) {
+              extern float skitHumidThreshold;
+              float v = atof(q + 1);
+              if (v >= MIN_HUMID_THRESHOLD && v <= MAX_HUMID_THRESHOLD) {
+                skitHumidThreshold = v;
+                EEPROM.put(EEPROM_SKIT_HUMID_THRESHOLD_ADDR, skitHumidThreshold);
+                client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+              } else {
+                client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Value out of range");
+              }
+            } else {
+              client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Missing value");
+            }
           }
           else if (strncmp(httpRequest, "GET /skit/temp.csv",  18) == 0) serveFile(client, "SK_T.csv",  "text/csv");
           else if (strncmp(httpRequest, "GET /skit/humid.csv", 19) == 0) serveFile(client, "SK_H.csv",  "text/csv");
@@ -304,13 +326,35 @@ void loop() {
           else if (strncmp(httpRequest, "GET /camera/threshold/humid",27) == 0) serveCameraThresholdHumid(client);
           else if (strncmp(httpRequest, "POST /camera/threshold/temp", 27) == 0) {
             const char* q = strchr(httpRequest + 27, '=');
-            if (q) { extern float camTempThreshold; camTempThreshold = atof(q + 1); EEPROM.put(EEPROM_CAM_TEMP_THRESHOLD_ADDR, camTempThreshold); }
-            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+            if (q) {
+              extern float camTempThreshold;
+              float v = atof(q + 1);
+              if (v >= MIN_THRESHOLD && v <= MAX_THRESHOLD) {
+                camTempThreshold = v;
+                EEPROM.put(EEPROM_CAM_TEMP_THRESHOLD_ADDR, camTempThreshold);
+                client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+              } else {
+                client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Value out of range");
+              }
+            } else {
+              client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Missing value");
+            }
           }
           else if (strncmp(httpRequest, "POST /camera/threshold/humid", 28) == 0) {
             const char* q = strchr(httpRequest + 28, '=');
-            if (q) { extern float camHumidThreshold; camHumidThreshold = atof(q + 1); EEPROM.put(EEPROM_CAM_HUMID_THRESHOLD_ADDR, camHumidThreshold); }
-            client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+            if (q) {
+              extern float camHumidThreshold;
+              float v = atof(q + 1);
+              if (v >= MIN_HUMID_THRESHOLD && v <= MAX_HUMID_THRESHOLD) {
+                camHumidThreshold = v;
+                EEPROM.put(EEPROM_CAM_HUMID_THRESHOLD_ADDR, camHumidThreshold);
+                client.println("HTTP/1.1 200 OK\nContent-Type: text/plain\nConnection: close\n\nOK");
+              } else {
+                client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Value out of range");
+              }
+            } else {
+              client.println("HTTP/1.1 400 Bad Request\nContent-Type: text/plain\nConnection: close\n\nERROR: Missing value");
+            }
           }
           else if (strncmp(httpRequest, "GET /camera/temp.csv",  20) == 0) serveFile(client, "CA_T.csv",  "text/csv");
           else if (strncmp(httpRequest, "GET /camera/humid.csv", 21) == 0) serveFile(client, "CA_H.csv",  "text/csv");

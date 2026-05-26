@@ -48,7 +48,7 @@
 #define GREEN_LED_PIN 47
 #define BUTTON_PIN    50
 
-// Pin Definitions — RS485 (Mega Serial1: RX=19, TX=18, DE+RE tied to GND)
+// Pin Definitions — RS485 (Mega Serial1: RX=19, TX=18, DE+RE on pin 34)
 #define RS485_BAUD    9600
 
 // Timing Constants
@@ -59,8 +59,8 @@
 // NTP syncs at 00:00 and 12:00 every calendar day — see Aging_Room.ino loop()
 
 // RS485 receive timeout — if no packet within this window sensor is marked stale
-// Covers 6-min (Skit) and 7-min (Camera) transmit intervals with margin
-#define RS485_TIMEOUT_MS  1200000UL
+// Covers 5-min (Camera) and 6-min (Skit) transmit intervals with margin
+#define RS485_TIMEOUT_MS  900000UL  // 15 minutes
 
 // SD Card Configuration
 #define SD_CHIP_SELECT 4
@@ -68,6 +68,7 @@
 // Network Configuration
 #define SERVER_PORT    80
 #define UDP_LOCAL_PORT 5203
+#define NTP_LOCAL_PORT 5203   // UDP port for NTP client socket (reuses UDP_LOCAL_PORT value)
 #define NTP_PACKET_SIZE 48
 
 // Authentication

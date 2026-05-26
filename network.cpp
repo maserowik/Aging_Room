@@ -206,6 +206,16 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
   Serial.print(ntpIP);
   Serial.println(")...");
 
+  // Always close any previous UDP socket before opening a new one.
+  // Leaving a stale socket open can cause Udp.parsePacket() to stall
+  // the W5100/W5500 chip, bypassing the millis() timeout and starving
+  // the watchdog.
+  Udp.stop();
+  if (!Udp.begin(NTP_LOCAL_PORT)) {
+    Serial.println("UDP begin failed");
+    return false;
+  }
+
   sendNTPpacket(ntpIP);
 
   unsigned long start = millis();
@@ -242,20 +252,25 @@ bool tryNtpSync(IPAddress ntpIP, const char* serverName) {
       Serial.print(lminute);    Serial.print(":");
       if (lsecond < 10) Serial.print("0");
       Serial.println(lsecond);
+
+      Udp.stop();   // release socket on success
       return true;
     }
     delay(10);
   }
 
+  Udp.stop();   // release socket on timeout
   Serial.print("NTP timeout from ");
   Serial.println(serverName);
   return false;
 }
 
 void requestNtpTime() {
+  wdt_reset();   // reset before first attempt (up to 6s total if both timeout)
   IPAddress primaryNTP(192, 168, 80, 8);
   if (tryNtpSync(primaryNTP, "192.168.80.8")) return;
 
+  wdt_reset();   // reset before fallback attempt
   IPAddress fallbackNTP(216, 239, 35, 0);
   if (tryNtpSync(fallbackNTP, "pool.ntp.org")) return;
 

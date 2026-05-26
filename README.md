@@ -30,7 +30,7 @@ An Arduino Mega-based multi-room temperature and humidity monitoring system for 
 Once running, the system enters a continuous monitoring loop that:
 
 - **Reads all four DHT22 sensors** every 2 seconds and updates the LCD display. The display rotates through sensor zones automatically.
-- **Receives RS485 serial data** from Skit Room and Camera Room Arduino UNO nodes. The Skit Room UNO transmits every 6 minutes; the Camera Room UNO transmits every 7 minutes. Each UNO reads a DHT22 sensor and transmits a packet (`SKIT:21.5,45.2\n` or `CAM:21.5,45.2\n`) over RS485. The Mega parses and stores the values.
+- **Polls RS485 sensor nodes** every 5 minutes on strict 5-minute clock boundaries. The Mega sends `GET:SKIT\n` then `GET:CAM\n` sequentially. Each UNO responds with one packet (`SKIT:21.5,45.2\n` or `CAM:21.5,45.2\n`) and returns to listen mode. Only one device transmits at a time — bus contention is impossible by design.
 - **Validates incoming RS485 data** — received values are checked against physical bounds (5-50 C, 1-99% RH). Out-of-range values from corrupt or truncated packets are rejected and logged to Serial; no CSV write occurs.
 - **Controls the LED indicators** based on sensor status -- solid green when all sensors are within the threshold margin, slow red blink when one or more sensors are out of range, and fast red blink on a sensor read failure.
 - **Logs sensor data to SD card** every 5 minutes on strict 5-minute clock boundaries, writing timestamped rows to daily files. A midnight janitor automatically deletes files older than 180 days.
@@ -49,7 +49,8 @@ Once running, the system enters a continuous monitoring loop that:
 |   - Ethernet shield          |
 |   - SD card                  |
 |   - LCD 20x4                 |
-|   - Serial1 (RX only, pin 19)|
+|   - Serial1 TX=18, RX=19     |
+|   - RS485 DE+RE on pin 34    |
 +-----------------------------+
            |
         RS485 bus (twisted pair)
@@ -60,7 +61,7 @@ Once running, the system enters a continuous monitoring loop that:
 | Skit Room   |  | Camera Room  |
 | UNO R3      |  | UNO R3       |
 | 1x DHT22    |  | 1x DHT22     |
-| Tx: 6 min   |  | Tx: 7 min    |
+| Poll: 5 min |  | Poll: 5 min  |
 | prefix SKIT:|  | prefix CAM:  |
 +-------------+  +--------------+
 ```
@@ -71,10 +72,13 @@ Once running, the system enters a continuous monitoring loop that:
 
 ### Overview
 
-The Mega receives RS485 packets from two UNO transmitter nodes on `Serial1` (pins 18/19). The Mega is receive-only; its MAX485 DE+RE is tied to GND permanently. Each UNO controls its DE+RE pin in firmware (pin 10), pulling it HIGH only during the ~20ms packet transmission, then immediately releasing the bus.
+The Mega controls the RS485 bus using a poll/respond architecture. Every 5 minutes on strict clock boundaries (:00, :05, :10 ... :55), the Mega sends a poll request to each node sequentially. Only the addressed UNO responds. Bus contention is impossible by design.
 
-**Skit Room UNO:** transmits every 6 minutes. Packet: `SKIT:21.5,45.2\n`
-**Camera Room UNO:** transmits every 7 minutes, with a 45-second boot offset to stagger from Skit. Packet: `CAM:21.5,45.2\n`
+On boot, an immediate poll fires as soon as NTP time is valid, providing fresh readings without waiting for the next 5-minute boundary.
+
+**Mega:** sends `GET:SKIT\n`, waits up to 2 seconds for reply, then sends `GET:CAM\n`.
+**Skit Room UNO:** listens for `GET:SKIT\n`, responds with `SKIT:21.5,45.2\n`, returns to listen mode.
+**Camera Room UNO:** listens for `GET:CAM\n`, responds with `CAM:21.5,45.2\n`, returns to listen mode.
 
 ### Baud Rate
 
@@ -89,7 +93,7 @@ All RS485 devices use **9600 baud**. SoftwareSerial on UNO is unreliable above ~
 | VCC        | UNO 5V             |
 | GND        | UNO GND            |
 | DI         | UNO pin 11 (SoftwareSerial TX) |
-| RO         | UNO pin 8 (SoftwareSerial RX, unused) |
+| RO         | UNO pin 8 (SoftwareSerial RX)         |
 | DE         | UNO pin 10 (firmware controlled) |
 | RE         | UNO pin 10 (tied to DE) |
 | A          | RS485 bus A        |
@@ -103,10 +107,10 @@ All RS485 devices use **9600 baud**. SoftwareSerial on UNO is unreliable above ~
 |------------|--------------------|
 | VCC        | Mega 5V            |
 | GND        | Mega GND           |
-| DI         | Not connected (Mega does not transmit) |
+| DI         | Mega pin 18 (Serial1 TX) |
 | RO         | Mega pin 19 (Serial1 RX) |
-| DE         | GND (receive-only, permanently) |
-| RE         | GND (tied to DE)   |
+| DE         | Mega pin 34 (firmware controlled) |
+| RE         | Mega pin 34 (tied to DE) |
 | A          | RS485 bus A        |
 | B          | RS485 bus B        |
 
@@ -172,8 +176,8 @@ UNO (Skit) MAX485      UNO (Camera) MAX485     Mega MAX485
 
 | File              | Purpose |
 |-------------------|---------|
-| `Skit_Room/Skit_Room.ino`     | UNO sketch -- reads DHT22, transmits RS485 every 6 min |
-| `Camera_Room/Camera_Room.ino` | UNO sketch -- reads DHT22, transmits RS485 every 7 min |
+| `Skit_Room/Skit_Room.ino`     | UNO sketch -- listens for Mega poll, responds with DHT22 reading |
+| `Camera_Room/Camera_Room.ino` | UNO sketch -- listens for Mega poll, responds with DHT22 reading |
 
 ---
 
@@ -370,9 +374,12 @@ Key constants in `config.h`:
 ## Troubleshooting
 
 ### Skit or Camera Room shows no data or dashes
-- Check RS485 wiring between the UNO and Mega.
-- Confirm the UNO sketch is uploaded and running -- check its Serial Monitor for `Sent: SKIT:XX.X,XX.X` or `Sent: CAM:XX.X,XX.X`.
-- Confirm DE+RE on each UNO MAX485 is wired to **pin 10**, not to VCC.
+- Check RS485 wiring: A to A and B to B between all three MAX485 modules.
+- Confirm Mega MAX485 DE+RE is wired to **pin 34** (not GND).
+- Confirm each UNO MAX485 RO is wired to **UNO pin 8**.
+- Confirm DE+RE on each UNO MAX485 is wired to **pin 10**.
+- Open Mega Serial Monitor -- it should show `Skit: XX.XC` and `Camera: XX.XC` every 5 minutes.
+- If Serial Monitor shows `RS485 no reply: GET:SKIT` the UNO is not responding -- check wiring and confirm UNO sketch is flashed.
 - The `Last Receive` timestamp in the Skit/Camera System Status panel shows when data was last received.
 
 ### Only one of Skit or Camera shows up on the Mega
