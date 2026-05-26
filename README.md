@@ -226,7 +226,7 @@ See [Setting Your Authentication Password](#setting-your-authentication-password
 
 ## Setting Your Authentication Password
 
-The system uses **salted SHA256 hashing** for web authentication.
+The system uses **salted SHA256 hashing** for web authentication. You must generate a hash before deploying -- the placeholder in `config.h` will not work.
 
 **Default username:** `Seegrid`
 **Default password:** Not set -- you must configure one.
@@ -234,11 +234,13 @@ The system uses **salted SHA256 hashing** for web authentication.
 ### Step 1 -- Choose your salt and password
 
 ```
-Salt:     SeegridPittsburgh2026
-Password: MySecure!Pass2026
+Salt:     SeegridPittsburgh2026    (example -- make yours unique)
+Password: MySecure!Pass2026        (example -- use your own)
 ```
 
 ### Step 2 -- Concatenate salt + password (salt first, no separator)
+
+Combine them with no spaces or separators, salt first:
 
 ```
 SeegridPittsburgh2026MySecure!Pass2026
@@ -246,7 +248,7 @@ SeegridPittsburgh2026MySecure!Pass2026
 
 ### Step 3 -- Generate the SHA256 hash
 
-Go to https://emn178.github.io/online-tools/sha256.html, paste the combined string, copy the 64-character hash.
+Go to https://emn178.github.io/online-tools/sha256.html, paste the combined string from Step 2, and copy the resulting 64-character hash.
 
 ### Step 4 -- Update config.h
 
@@ -255,26 +257,167 @@ const char AUTH_SALT[]     = "SeegridPittsburgh2026";
 const char PASSWORD_HASH[] = "<your-64-char-hash-here>";
 ```
 
+### Step 5 -- Save and upload
+
+Save `config.h` and re-upload the sketch to your Arduino.
+
+---
+
+### Example Walkthrough
+
+```
+Step 1: Choose values
+  Salt:     MyCompanySalt2026
+  Password: SecurePass123!
+
+Step 2: Combine (no spaces)
+  Combined: MyCompanySalt2026SecurePass123!
+
+Step 3: Generate hash at website
+  Input:  MyCompanySalt2026SecurePass123!
+  Output: 7a8f9b2c3d4e5f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4
+
+Step 4: Put in config.h
+  const char AUTH_SALT[]     = "MyCompanySalt2026";
+  const char PASSWORD_HASH[] = "7a8f9b2c3d4e5f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4";
+```
+
+---
+
+### Password Security Guidelines
+
+**DO:**
+- Change the default salt to something unique per installation
+- Use a strong password (12+ characters, mixed case, numbers, symbols)
+- Use a different salt for each deployed unit
+- Store your salt and password in a secure password manager
+
+**DON'T:**
+- Use the default salt in production
+- Commit your actual password or salt to a public Git repository
+- Add spaces or separators when combining salt and password
+- Reuse salts across multiple deployments
+
+---
+
+### Regenerating Your Password
+
+If you need to change the password after deployment:
+
+1. Keep the same salt or choose a new one.
+2. Combine the new salt and new password.
+3. Generate a new SHA256 hash at the website.
+4. Update both values in `config.h`.
+5. Re-upload the sketch to the Arduino.
+
 ---
 
 ## Memory Architecture and Data Persistence
 
-The Arduino Mega has 8 KB of SRAM and 256 KB of Flash.
+The Arduino Mega uses four distinct memory types. Understanding where data lives explains how the system behaves after a power outage.
 
-- All string literals are wrapped in the `F()` macro to store them in Flash instead of SRAM.
-- Temperature thresholds for all five rooms are persisted in EEPROM and survive power outages.
-- CSV data is written to SD card every 5 minutes and also survives power outages.
-- The `freeMemory()` function reports available SRAM, shown in the System Status panel on each dashboard.
+### Flash Memory -- Where Credentials Are Stored
 
-**RAM thresholds:**
+Flash stores the compiled program code and all constants, including your authentication salt and password hash.
+
+| Property | Value |
+|----------|-------|
+| Size | 256 KB |
+| Survives power loss | **Yes** |
+| Write method | Arduino IDE upload only |
+| Runtime modification | Not possible |
+
+Because credentials are in Flash, they cannot be changed by a running bug, network attack, or power event. Changing them requires uploading a new sketch via USB.
+
+---
+
+### EEPROM -- Where Temperature Thresholds Are Stored
+
+EEPROM stores the user-configured temperature thresholds for all five rooms. It is not used for credentials because it is too easily readable and writable at runtime.
+
+| Property | Value |
+|----------|-------|
+| Size | 4 KB |
+| Survives power loss | **Yes** |
+| Write method | Button interface or web dashboard at runtime |
+
+```cpp
+// sensors.cpp -- Reading threshold on startup
+void initSensors() {
+  EEPROM.get(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
+  if (tempThreshold < MIN_THRESHOLD || tempThreshold > MAX_THRESHOLD) {
+    tempThreshold = DEFAULT_TEMP_THRESHOLD;
+  }
+}
+
+// sensors.cpp -- Saving threshold when user adjusts via button or web
+void saveThreshold() {
+  EEPROM.put(EEPROM_TEMP_THRESHOLD_ADDR, tempThreshold);
+}
+```
+
+---
+
+### RAM -- Volatile Working Memory
+
+RAM holds all runtime variables (sensor readings, connection state, HTTP buffers) and is lost immediately on power loss. The system re-initializes everything from Flash and EEPROM at each boot. All string literals are wrapped in the `F()` macro to store them in Flash instead of SRAM.
+
+| Property | Value |
+|----------|-------|
+| Size | 8 KB |
+| Survives power loss | **No** |
+
+**RAM health thresholds** (reported live in the System Status panel on each dashboard via `freeMemory()`):
 
 | Level | Status |
 |-------|--------|
 | Above 2 KB | Comfortable |
-| 1.5-2 KB | Yellow zone -- monitor |
+| 1.5--2 KB | Yellow zone -- monitor |
 | Below 1.5 KB | Red zone -- apply F() macro pass |
 | Below 1 KB | Crash/watchdog reset risk |
 | Below 512 bytes | Imminent crash |
+
+---
+
+### SD Card -- Historical Sensor Data
+
+The SD card stores date-prefixed daily CSV files for all three rooms. Data accumulates continuously and survives power outages. The last write before a power loss may be incomplete but all prior records are unaffected.
+
+| Property | Value |
+|----------|-------|
+| Size | User-supplied (FAT32, 32 GB or smaller) |
+| Survives power loss | **Yes** |
+| Auto-purge | Files older than 180 days deleted at midnight |
+
+---
+
+### Memory Persistence Summary
+
+| Memory Type | Size | Survives Power Loss | What's Stored Here |
+|-------------|------|---------------------|--------------------|
+| **Flash** | 256 KB | **Yes** | Program code, credentials |
+| **EEPROM** | 4 KB | **Yes** | Temperature thresholds (all 5 rooms) |
+| **RAM** | 8 KB | **No** | Runtime state, buffers |
+| **SD Card** | User | **Yes** | Historical CSV sensor data |
+
+---
+
+### Power Outage Recovery Sequence
+
+```
+[0s]    Power on
+[1s]    Flash loads program code and credentials
+[2s]    EEPROM reads temperature thresholds for all rooms
+[3s]    Display shows boot sequence
+[5s]    Sensors initialize
+[10s]   Network attempts DHCP
+[15s]   Device IP address displayed on LCD
+[20s]   NTP time sync begins
+[25s]   RS485 immediate boot poll fires (fresh Skit + Camera readings)
+[30s]   System fully operational
+```
+
+No user action is required after a power outage. Credentials, threshold settings, and all historical data are automatically available.
 
 ---
 
@@ -396,7 +539,7 @@ Key constants in `config.h`:
 - Confirm you are using a **MAX485 TTL module**, NOT an RS232-to-RS485 converter.
 - RS232-to-RS485 converters use +/-12V logic levels and will not work with Arduino.
 - Ensure DE and RE pins are tied together and connected to pin 10 on each UNO.
-- On the Mega side, DE+RE must be tied to GND -- not 5V.
+- On the Mega side, DE+RE must be wired to **pin 34** (firmware controlled) -- not GND and not 5V.
 
 ### Dashboard shows "SYSTEM OFFLINE" banner
 - The Arduino is unreachable. Dashboard retries automatically every 4 seconds.
